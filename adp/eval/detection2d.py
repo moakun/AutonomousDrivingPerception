@@ -35,22 +35,30 @@ class FrameGT:
     ignore: np.ndarray = field(default_factory=lambda: np.empty((0, 4)))
 
 
+def project_box_2d(frame: Frame, obj, min_size_px: float = 4.0) -> np.ndarray | None:
+    """3D GT box -> clipped 2D xyxy rect in the frame's image, or None if the
+    box is behind the camera or degenerate after clipping."""
+    uv, depth = frame.camera.project(obj.corners_cam())
+    if np.any(depth <= 0.1):
+        return None
+    x0, y0 = uv.min(axis=0)
+    x1, y1 = uv.max(axis=0)
+    x0, x1 = np.clip([x0, x1], 0, frame.camera.width)
+    y0, y1 = np.clip([y0, y1], 0, frame.camera.height)
+    if (x1 - x0) < min_size_px or (y1 - y0) < min_size_px:
+        return None
+    return np.array([x0, y0, x1, y1])
+
+
 def gt_boxes_2d(frame: Frame, min_size_px: float = 4.0) -> FrameGT:
     """Project 3D GT boxes to clipped 2D rectangles and split GT vs ignore."""
     per_class: dict[str, list] = {c: [] for c in ADP_CLASSES}
     ignore: list = []
 
     for obj in frame.objects:
-        uv, depth = frame.camera.project(obj.corners_cam())
-        if np.any(depth <= 0.1):
+        rect = project_box_2d(frame, obj, min_size_px)
+        if rect is None:
             continue
-        x0, y0 = uv.min(axis=0)
-        x1, y1 = uv.max(axis=0)
-        x0, x1 = np.clip([x0, x1], 0, frame.camera.width)
-        y0, y1 = np.clip([y0, y1], 0, frame.camera.height)
-        if (x1 - x0) < min_size_px or (y1 - y0) < min_size_px:
-            continue
-        rect = [x0, y0, x1, y1]
         if obj.category in per_class and obj.visibility >= 2:
             per_class[obj.category].append(rect)
         else:

@@ -64,6 +64,19 @@ class ObjectGT:
 
 
 @dataclass
+class CamFrame:
+    """One camera image at sensor rate (~12Hz). Sweeps have no annotations;
+    is_keyframe marks the ~2Hz samples where GT exists (sample_token set)."""
+
+    scene_name: str
+    timestamp_us: int
+    image_path: str
+    camera: CameraModel
+    is_keyframe: bool
+    sample_token: str | None
+
+
+@dataclass
 class Frame:
     scene_name: str
     sample_token: str
@@ -97,6 +110,30 @@ class NuScenesSource:
             sample = self.nusc.get("sample", sample_token)
             yield self._build_frame(scene["name"], sample, min_visibility)
             sample_token = sample["next"]
+
+    def camera_frames(self, scene_name: str) -> Iterator[CamFrame]:
+        """Iterate ALL camera frames of a scene at sensor rate (~12Hz),
+        keyframes and sweeps alike, in time order. For tracking: associate at
+        12Hz, evaluate at the 2Hz keyframes."""
+        scene = next(s for s in self.nusc.scene if s["name"] == scene_name)
+        first_sample = self.nusc.get("sample", scene["first_sample_token"])
+        sd_token = first_sample["data"][self.camera_channel]
+        while sd_token:
+            sd = self.nusc.get("sample_data", sd_token)
+            cs = self.nusc.get("calibrated_sensor", sd["calibrated_sensor_token"])
+            yield CamFrame(
+                scene_name=scene_name,
+                timestamp_us=sd["timestamp"],
+                image_path=os.path.join(self.nusc.dataroot, sd["filename"]),
+                camera=CameraModel(
+                    K=np.asarray(cs["camera_intrinsic"], dtype=float),
+                    width=sd["width"],
+                    height=sd["height"],
+                ),
+                is_keyframe=sd["is_key_frame"],
+                sample_token=sd["sample_token"] if sd["is_key_frame"] else None,
+            )
+            sd_token = sd["next"]
 
     def _build_frame(self, scene_name: str, sample: dict, min_visibility: int) -> Frame:
         sd_token = sample["data"][self.camera_channel]

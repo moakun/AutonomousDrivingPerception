@@ -23,7 +23,7 @@ All four done superficially (risk from box area) is a demo.
 |---|-----------|-----------|------------------|--------|
 | M0 | Data & calibration | — | nuScenes pipeline + camera model utilities | ✅ done — geometry round-trips at machine precision; GT boxes render correctly on all 10 mini scenes |
 | M1 | Detection | M0 | Fine-tuned RT-DETR/YOLO, ONNX export, eval harness | ✅ done (fine-tuning deferred) — yolo11m@960 selected (mAP@0.5 0.419, ~18ms GPU p50); ONNX parity verified (max 0.06px). ORT-CPU is ~260ms → live pipeline stays on PyTorch GPU; TensorRT later. Fine-tuning deferred: mini's 404 frames too few — revisit with full trainval if cyclist AP (0.13) blocks downstream. |
-| M2 | Tracking | M1 | ByteTrack/OC-SORT with per-track Kalman velocity |
+| M2 | Tracking | M1 | ByteTrack/OC-SORT with per-track Kalman velocity | ✅ done — own ByteTrack impl @12Hz sweeps, eval @2Hz keyframes: MOTA 0.27, IDF1 0.51, 80 IDsw; recall by range 0.62/<30m, 0.46/30–50m, 0.31/50m+. Looser-threshold variant rejected (+recall but IDsw 80→117). Tracker step ~1ms. |
 | M3 | Metric lift v1 (IPM) | M0, M2 | BEV positions from ground-plane homography, validated vs lidar GT |
 | M4 | Lanes in BEV | M0 | Lane detection + polynomial fit in BEV space |
 | M5 | Risk layer | M2, M3 (M4 optional) | TTC + lane assignment + RSS distance, per-object risk report |

@@ -1,1 +1,1 @@
-from adp.data.nuscenes_source import Frame, ObjectGT, NuScenesSource
+from adp.data.nuscenes_source import CamFrame, Frame, ObjectGT, NuScenesSource
