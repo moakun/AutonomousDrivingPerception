@@ -39,11 +39,26 @@ def render_bev(
     tracks: list[dict],
     gt: list[dict] | None = None,
     canvas: BevCanvas | None = None,
+    lanes: list[np.ndarray] | None = None,
+    ego_corridor: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     """tracks: [{id, category, pos (2,), vel (2,), range_std}] in EGO frame.
-    gt: [{pos (2,)}] ghost markers. Returns BGR image."""
+    gt: [{pos (2,)}] ghost markers. lanes: (N,2) ego-frame polylines.
+    ego_corridor: (left_polyline, right_polyline) shaded as the ego lane.
+    Returns BGR image."""
     c = canvas or BevCanvas()
     img = np.full((c.size, c.size, 3), 30, dtype=np.uint8)
+
+    if ego_corridor is not None:
+        left, right = ego_corridor
+        poly = np.array([c.to_px(x, y) for x, y in [*left, *right[::-1]]])
+        overlay = img.copy()
+        cv2.fillPoly(overlay, [poly], (45, 70, 45))
+        img = cv2.addWeighted(overlay, 0.6, img, 0.4, 0)
+    if lanes:
+        for line in lanes:
+            pts = np.array([c.to_px(x, y) for x, y in line])
+            cv2.polylines(img, [pts], False, (90, 170, 90), 2, cv2.LINE_AA)
 
     # Range rings every 10m + faint lane-width corridor for orientation.
     for r in range(10, int(c.x_range[1]) + 1, 10):

@@ -3,3 +3,8 @@ opencv-python
 pyquaternion
 nuscenes-devkit
 pytest
+ultralytics
+onnxruntime
+# YOLOP (lane segmentation, loaded via torch.hub) needs these two:
+prefetch_generator
+yacs
