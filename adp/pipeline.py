@@ -43,10 +43,18 @@ class PipelineOutput:
 class PerceptionPipeline:
     def __init__(self, detector: Detector | None = None,
                  segmenter: LaneSegmenter | None = None,
-                 lane_stride: int = 2):
+                 lane_stride: int = 2,
+                 use_depth: bool = False):
+        """use_depth: enable the M6 hybrid lift (IPM <30m, monocular depth
+        beyond). Costs ~39ms/frame; improves far-field BEV accuracy only —
+        the TTC/RSS working range (<30m) is IPM's regardless. Default off."""
         self.detector = detector or Detector(weights="yolo11m.pt", imgsz=960, conf=0.1)
         self.segmenter = segmenter or LaneSegmenter()
         self.lane_stride = lane_stride
+        self.depth = None
+        if use_depth:
+            from adp.lift.depth import DepthLift
+            self.depth = DepthLift()
         self.tracker = ByteTracker()
         self.corridor_smoother = CorridorSmoother()
         self.ego_kf: ConstantVelocityKalman | None = None
@@ -78,6 +86,10 @@ class PerceptionPipeline:
         t0 = time.perf_counter()
         confirmed = self.tracker.step(dets, dt)
         lift = GroundPlaneLift(cam.camera, cam.T_ego_from_cam)
+        if self.depth is not None:
+            from adp.lift.hybrid import HybridLift
+            self.depth.compute(img_bgr)
+            lift = HybridLift(lift, self.depth)
         update_bev_states(confirmed, lift, cam.T_global_from_ego, dt)
         timings["track_lift"] = (time.perf_counter() - t0) * 1e3
 
