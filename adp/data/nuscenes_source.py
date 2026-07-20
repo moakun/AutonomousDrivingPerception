@@ -72,6 +72,8 @@ class CamFrame:
     timestamp_us: int
     image_path: str
     camera: CameraModel
+    T_ego_from_cam: SE3
+    T_global_from_ego: SE3
     is_keyframe: bool
     sample_token: str | None
 
@@ -121,6 +123,7 @@ class NuScenesSource:
         while sd_token:
             sd = self.nusc.get("sample_data", sd_token)
             cs = self.nusc.get("calibrated_sensor", sd["calibrated_sensor_token"])
+            ego_pose = self.nusc.get("ego_pose", sd["ego_pose_token"])
             yield CamFrame(
                 scene_name=scene_name,
                 timestamp_us=sd["timestamp"],
@@ -130,6 +133,8 @@ class NuScenesSource:
                     width=sd["width"],
                     height=sd["height"],
                 ),
+                T_ego_from_cam=SE3.from_quat_trans(cs["rotation"], cs["translation"]),
+                T_global_from_ego=SE3.from_quat_trans(ego_pose["rotation"], ego_pose["translation"]),
                 is_keyframe=sd["is_key_frame"],
                 sample_token=sd["sample_token"] if sd["is_key_frame"] else None,
             )

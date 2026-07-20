@@ -66,6 +66,15 @@ class ConstantVelocityKalman:
         self.P = F @ self.P @ F.T + Q
         return self.position.copy()
 
+    def mahalanobis_sq(self, z: np.ndarray, meas_var: float | None = None) -> float:
+        """Squared Mahalanobis distance of a measurement from the prediction —
+        the innovation gate statistic (chi-square with d dof under the model)."""
+        d = self.d
+        R = np.eye(d) * (self.meas_var if meas_var is None else meas_var)
+        y = np.asarray(z, dtype=float) - self.position
+        S = self.P[:d, :d] + R
+        return float(y @ np.linalg.solve(S, y))
+
     def update(self, z: np.ndarray, meas_var: float | None = None) -> None:
         d = self.d
         H = np.zeros((d, 2 * d))
