@@ -63,7 +63,7 @@ def render_bev(
     # Range rings every 10m + faint lane-width corridor for orientation.
     for r in range(10, int(c.x_range[1]) + 1, 10):
         cv2.circle(img, c.to_px(0, 0), int(r * c.scale), (55, 55, 55), 1, cv2.LINE_AA)
-        cv2.putText(img, f"{r}", c.to_px(r * 0.02 - 0.5, -r * 0.99),
+        cv2.putText(img, f"{r}m", c.to_px(r * 0.02 - 0.5, -r * 0.99),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (110, 110, 110), 1, cv2.LINE_AA)
     for y in (-1.85, 1.85):
         cv2.line(img, c.to_px(0, y), c.to_px(c.x_range[1], y), (45, 45, 60), 1)
@@ -82,7 +82,9 @@ def render_bev(
         u, v = c.to_px(*t["pos"])
         if not (0 <= u < c.size and 0 <= v < c.size):
             continue
-        color = CLASS_COLORS.get(t["category"], (160, 160, 160))
+        # Explicit per-track color wins (e.g. risk-level coloring); class
+        # colors remain the default for dev views.
+        color = t.get("color") or CLASS_COLORS.get(t["category"], (160, 160, 160))
         # Position uncertainty ring (1 sigma).
         cv2.circle(img, (u, v), max(int(t.get("range_std", 0) * c.scale), 2),
                    color, 1, cv2.LINE_AA)
@@ -92,6 +94,8 @@ def render_bev(
         if vel is not None and np.linalg.norm(vel) > 0.5:
             u2, v2 = c.to_px(t["pos"][0] + vel[0], t["pos"][1] + vel[1])
             cv2.arrowedLine(img, (u, v), (u2, v2), color, 2, cv2.LINE_AA, tipLength=0.25)
-        cv2.putText(img, f"#{t['id']}", (u + 6, v - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+        label = t.get("label", f"#{t['id']}")
+        if label:
+            cv2.putText(img, label, (u + 6, v - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
     return img
