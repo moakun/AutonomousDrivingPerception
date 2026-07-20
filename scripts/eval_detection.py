@@ -65,14 +65,36 @@ def run_config(source, weights: str, imgsz: int) -> dict:
     return summary
 
 
+def run_per_scene(source, weights="yolo11m.pt", imgsz=960):
+    """Per-scene AP for the selected model — feeds the M7 per-condition report."""
+    detector = Detector(weights=weights, imgsz=imgsz, conf=0.05)
+    out = {}
+    for scene_name in source.scene_names():
+        evaluator = DetectionEvaluator(iou_thr=0.5)
+        for frame in source.frames(scene_name, min_visibility=1):
+            img = cv2.imread(frame.image_path)
+            evaluator.add_frame(detector(img), gt_boxes_2d(frame))
+        out[scene_name] = evaluator.summary()
+        print(f"{scene_name}: mAP={out[scene_name]['map']:.3f}", flush=True)
+    path = OUT_PATH.replace("baseline", "per_scene")
+    with open(path, "w") as f:
+        json.dump(out, f, indent=2)
+    print(f"saved: {os.path.abspath(path)}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", nargs="*", default=None,
                         help="weights files; default runs the standard candidate set")
+    parser.add_argument("--per-scene", action="store_true",
+                        help="per-scene AP for yolo11m@960 (per-condition report)")
     args = parser.parse_args()
     configs = [(m, 640) for m in args.models] if args.models else DEFAULT_CONFIGS
 
     source = NuScenesSource(verbose=False)
+    if args.per_scene:
+        run_per_scene(source)
+        return
     results = []
     for weights, imgsz in configs:
         print(f"=== {weights} @ imgsz={imgsz} ===", flush=True)
