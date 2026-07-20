@@ -1,0 +1,42 @@
+The actual hard problem
+Detection is a solved API call. YOLO/RT-DETR give you boxes at 30–100 FPS. Lane detection has decent pretrained models. The gap between "boxes on a video" and "perception system" is metric grounding: a bounding box tells you nothing about where something is in meters or how fast it's closing. Risk without metric grounding is pixel-area heuristics, which is worthless.
+So the spine of the project is:
+frame → 2D detection → tracking (IDs over time) → 3D/BEV lift → risk scoring
+Everything upstream is off-the-shelf. The 3D lift and the risk layer are yours.
+Stage plan
+Stage 0 — Data & calibration (don't skip).
+Use nuScenes (has camera intrinsics/extrinsics, 3D boxes, radar/lidar ground truth for validating your distance estimates) or KITTI. BDD100K if you want scale/diversity but it's 2D-only. You need a dataset with 3D ground truth or you can never verify your distance estimates aren't fiction. If you later run on dashcam footage, you need intrinsics — either checkerboard-calibrate the camera or estimate focal length from vanishing points.
+Stage 1 — Detection.
+Fine-tune RT-DETR or YOLOv8/v11 on your dataset classes (car, truck, bus, pedestrian, cyclist). Don't train from scratch. Export to ONNX/TensorRT early; latency budget matters and it's easier to design around than retrofit.
+Stage 2 — Lanes.
+Treat separately — lane detection is a different problem shape (thin, elongated, ambiguous under occlusion). Options: CLRNet or LaneATT (anchor-based, fast, good on TuSimple/CULane), or a segmentation head + curve fitting. Fit polynomials/splines in BEV space, not image space — image-space lane curves are perspective-distorted and useless for geometry.
+Stage 3 — Tracking.
+ByteTrack or OC-SORT on top of detections. Kalman filter per track gives you velocity estimates for free. This is what turns detection into perception — no IDs, no time-to-collision.
+Stage 4 — Metric lift (the interesting part).
+Three options, in increasing ambition:
+
+Ground-plane homography (IPM). Assume flat road, use camera height + intrinsics, project box bottom-center to the road plane. Cheap, fast, breaks on hills and when the box bottom is occluded. Good baseline — implement this first.
+Monocular depth. Depth Anything V2 or Metric3D for metric depth. Sample depth in the lower box region, median-filter. More robust to slopes, slower, still scale-ambiguous unless you use a metric model.
+Monocular 3D detection. FCOS3D, MonoFlex, or BEVFormer-style. Predicts 3D boxes directly. Best results, most work, needs 3D-annotated data.
+
+Do IPM first, validate against nuScenes lidar GT, then swap in depth and measure whether it actually helped. If IPM gets you within 15% at 30m, the extra 200ms of depth inference may not be worth it.
+Stage 5 — Risk.
+This is the part to make defensible rather than hand-wavy. Concrete, computable quantities:
+
+TTC = longitudinal gap / relative closing speed. The classic. Needs Stage 4 + Stage 3.
+Lane assignment — is this object in my lane, adjacent, or off-road? Requires lanes in BEV. Turns "there's a car" into "there's a car in my path."
+Pedestrian intent — position relative to road edge + lateral velocity + heading. Cheap version: is the pedestrian's BEV velocity vector pointed into the ego path within N seconds?
+Responsibility-Sensitive Safety (RSS) minimum safe distance — a formal, published model (Mobileye). Gives you a principled longitudinal/lateral safe-distance envelope instead of invented thresholds. Cite it and you have a defensible risk layer.
+
+Output a per-object risk score plus a scalar ego risk. Don't output a color-coded box and call it done — output why (TTC 1.8s, same lane, closing at 12 m/s).
+Where this will actually break
+
+Depth error compounds into TTC error. TTC is a ratio of two noisy estimates; at 50m your distance error might be 20% and your velocity derivative is garbage. Smooth velocity through the Kalman filter, not by differencing raw depths, and report confidence intervals on TTC. Be prepared for TTC to only be trustworthy under ~30m.
+Flat-ground assumption. Every IPM system lies on hills and banked curves.
+Night, rain, glare. Your metrics on clean daytime nuScenes won't transfer. Report per-condition breakdowns; it's more honest and more interesting.
+Latency. Detection + depth + tracking + lanes stacked serially can easily hit 200ms. At 30 m/s that's 6 meters of staleness. Either run modules at different rates or accept it and document it.
+
+Stack
+Python, PyTorch, ONNX Runtime or TensorRT for inference, OpenCV for geometry, nuscenes-devkit for data. Visualization: an OpenCV overlay plus a BEV canvas side-by-side — the BEV view is what proves your metric lift works, and it's what makes the demo look like a real system instead of a YOLO tutorial.
+Scoping call
+Given this is a learning project: cut lanes or cut risk, don't cut metric grounding. A tool that does vehicles + pedestrians + accurate BEV distances + TTC is a real perception system. A tool that does all four superficially, with risk derived from box area, is a demo. The first is worth building.

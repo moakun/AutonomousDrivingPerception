@@ -1,0 +1,5 @@
+numpy
+opencv-python
+pyquaternion
+nuscenes-devkit
+pytest
