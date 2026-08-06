@@ -224,3 +224,111 @@ tests/         # geometry round-trips, filter sanity, risk sanity scenes
 M0 → M1 → M2 → M3 is a strict chain and is the critical path — at the end of M3 the project is
 already "real" (metric BEV perception, validated). M4 can proceed in parallel after M0. M5 needs
 M3; it gains lane assignment when M4 lands. M6 only runs if M3's numbers leave room to improve.
+
+---
+
+# Phase 2 — validation & hardening (M8–M11)
+
+M0–M7 built and measured the system. Phase 2 addresses what those measurements exposed. Nine
+improvements, grouped into four milestones; improvement numbers (#1–#9) are referenced in commits
+and issue text.
+
+| # | Milestone | Improvements | Status |
+|---|-----------|--------------|--------|
+| M8 | Risk-layer quantitative validation | #1 | 🔄 in progress |
+| M9 | Width-prior range fusion | #2 | planned |
+| M10 | Robustness experiments | #3, #4 | planned |
+| M11 | Engineering hardening | #5–#9 | planned |
+
+## M8 — Risk-layer quantitative validation (#1)
+
+**The gap:** every other stage has a validated error curve; M5 has sanity tests and an eyeball
+audit of top moments. The scoring weights in `adp/risk/scoring.py` (0.30 ego base, 0.45 TTC ramp,
+0.25 RSS, 0.20 intent) are defensible but unvalidated — the risk layer is the part that makes this
+a perception *system* rather than a distance estimator, and it currently rests on hand-picked
+constants.
+
+**The proxy label, already in the downloaded data:** differentiate `ego_pose` over each scene
+(offline, acausal smoothing — appropriate for label generation) to get ego longitudinal
+acceleration, then label each keyframe by whether hard braking begins within a horizon.
+
+Tasks:
+1. `adp/eval/braking.py` — ego kinematics from pose trajectory (Savitzky-Golay smoothed speed and
+   acceleration), hard-braking event labelling with configurable threshold/horizon, and exclusion
+   of frames where the ego is already stopped (braking is undefined there).
+2. `adp/eval/ranking.py` — ROC-AUC and average precision, implemented directly (no new dependency,
+   independently testable).
+3. `scripts/eval_risk_validation.py` — run the pipeline once, cache per-keyframe features + labels,
+   then compute metrics from cache (`--from-cache`) so threshold sweeps are free.
+4. **Baseline comparison — the project's central claim, made testable:** does the metric-grounded
+   risk score predict human braking better than
+   (a) max box-area fraction (the plan's explicit strawman: "risk derived from box area"),
+   (b) nearest-object range alone (metric, but no TTC/lanes/RSS),
+   (c) inverse-TTC alone (isolates what lane assignment + RSS + intent add), and
+   (d) ego speed alone (trivial predictor control)?
+5. Threshold/horizon sensitivity: report at ≥2 braking thresholds so the result isn't an artifact
+   of one cut.
+
+**Exit criteria:** ROC-AUC and average precision for the risk score and all four baselines, with
+base rate and event counts stated; the risk score beats the box-area strawman, or the loss is
+reported honestly. Caveats documented (drivers brake for lights/turns, not only for risk objects;
+10 scenes is a small sample; this is correlation with human behaviour, not ground-truth danger).
+
+## M9 — Width-prior range fusion (#2)
+
+**The gap:** M3 documented gradual occluded-box-bottom drift (range biased high, phantom velocity);
+M6 *disproved* depth as the fix. The remedy has to be geometric.
+
+Tasks: box pixel-width + class width priors (car ≈1.8m, truck ≈2.5m) give a range estimate
+independent of the bottom edge; fuse as a second Kalman measurement with its own noise model, and
+use IPM-vs-width disagreement as an occlusion detector. Re-run the M3 harness for the verdict.
+
+**Exit criteria:** range-error curve vs IPM baseline, broken down by visibility level (the
+occluded-object bins are the ones that must improve); if it doesn't help, document like M6.
+Secondary win if it lets the velocity-plausibility gate in `scoring.py` become a backstop rather
+than a load-bearing patch.
+
+## M10 — Robustness experiments (#3, #4)
+
+**#3 — Pitch sensitivity without hill data.** mini has no slope scenes, but perturbing camera pitch
+±1–3° in the extrinsics and re-running `eval_ipm.py` produces an error-vs-pitch curve. Converts
+"every IPM system lies on hills" from caveat to measured sensitivity, and covers ego pitch under
+braking/acceleration, which happens on flat roads too.
+
+**#4 — Localization dependence.** BEV filters live in the global frame using nuScenes `ego_pose` —
+ground-truth localization a camera-only system would not have. Re-run M3 with ego motion from a
+cheap visual-odometry / constant-turn-rate estimate and report the delta.
+
+**Exit criteria:** both curves in REPORT.md; #4's result reframes the headline accuracy numbers
+honestly (either "barely matters" or a stated dependency).
+
+## M11 — Engineering hardening (#5–#9)
+
+- **#5 Config consolidation.** The `configs/` directory in the layout above was never built;
+  thresholds are scattered across eight modules (ByteTrack defaults, `GATE_MD2`/`MAX_REJECTS`,
+  RSS params, `MAX_TRUST_RANGE`, scoring weights, `SWITCH_RANGE_M`, lane constants). One
+  dataclass/YAML — prerequisite for M8 weight tuning and any sweep.
+- **#6 Provenance in eval outputs.** Every `out/eval/*.json` should carry git SHA, timestamp, and
+  the config dump. Makes REPORT.md genuinely reproducible rather than nominally so.
+- **#7 End-to-end pipeline test.** All current tests are module-level; nothing instantiates
+  `PerceptionPipeline`. A ~10-frame smoke test with loose assertions (no NaNs in BEV state,
+  well-formed risk records, metrics above floors) catches integration breakage unit tests
+  structurally cannot.
+- **#8 Lane-stride hold-timer bug.** `pipeline.py` calls the corridor smoother with `dt=0.0` on
+  lane-skip frames, so the 1s hold advances only on update frames — with `lane_stride=2` the
+  effective hold is ~2s wall-clock. Charge real time or make the intent explicit.
+- **#9 Risk bucket hysteresis.** Nothing debounces low/caution/high, so an object hovering at a
+  threshold oscillates frame to frame. Enter at 0.6 / exit at 0.5 plus 2–3 frame confirmation.
+
+**Exit criteria:** #5–#7 landed with tests; #8 fixed with a regression test; #9 verified on the
+demo videos (no visible flicker).
+
+## Larger, later (not part of the nine)
+
+- **Fine-tune on full trainval** — the known fix for cyclist AP 0.13 and the night recall drop;
+  biggest number-mover across every downstream stage, costs a ~300GB download and GPU hours.
+- **Tiled/sliced inference on the far field** — recall is 31% beyond 50m largely because objects
+  are tiny at 960px; slicing the upper-centre region may recover some without retraining. Gate on
+  the latency cost.
+- **Multi-camera** — nuScenes has six; surround coverage would catch adjacent-lane cut-ins earlier.
+  Substantial work, and the risk layer is forward-focused, so this ranks last.
