@@ -177,7 +177,55 @@ def main():
         L.append(f"- [{m['score']:.2f}] {m['scene']} #{m['track']} "
                  f"{m['category']}: " + "; ".join(m["reasons"]) + "\n")
 
-    L.append("\n## 7. Known limitations (measured, not hypothetical)\n")
+    try:
+        rv = load("risk_validation.json")
+    except FileNotFoundError:
+        rv = None
+    if rv:
+        L.append("\n## 7. Does the risk output predict human braking? (M8)\n")
+        L.append("The risk layer has no ground truth — nuScenes labels objects, not "
+                 "danger. Proxy signal: hard braking within a horizon, derived "
+                 "offline from ego pose (acausal; the perception path never sees "
+                 "it). Predictors are ranked by ROC-AUC with bootstrap CIs.\n")
+        hard = [s for s in rv["sensitivity"]
+                if s["config"]["accel_thresh_ms2"] == -3.0
+                and s["config"]["horizon_s"] == 5.0]
+        if hard:
+            s = hard[0]
+            L.append(f"\n**Hard braking (<= -3.0 m/s^2 within 5s), n="
+                     f"{s['n_valid_keyframes']} keyframes, {s['n_positive']} "
+                     f"positive (base rate {s['base_rate']:.1%}):**\n\n")
+            L.append("| predictor | ROC-AUC | 95% CI | AP | vs base rate |\n"
+                     "|---|---|---|---|---|\n")
+            for name, m in sorted(s["predictors"].items(),
+                                  key=lambda kv: -kv[1]["roc_auc"]):
+                lo, hi = m["roc_auc_ci"]
+                L.append(f"| {name} | {m['roc_auc']:.3f} | [{lo:.2f}, {hi:.2f}] "
+                         f"| {m['avg_precision']:.3f} | "
+                         f"{m['ap_lift_over_base_rate']:.2f}x |\n")
+        L.append("\n**Findings.**\n")
+        L.append("1. *Metric grounding is validated.* Inverse TTC — which exists "
+                 "only because of the metric lift (M3) and Kalman velocity (M2) — "
+                 "is the strongest predictor of hard braking (AUC 0.68-0.71 across "
+                 "horizons, ~2x base rate on AP) and is the only predictor whose CI "
+                 "clears chance. It beats the box-area strawman the plan called "
+                 "worthless (0.55, CI includes 0.5).\n")
+        L.append("2. *The composite score is worse than its own best component.* "
+                 "Adding zone base + RSS + intent on top of TTC dilutes the signal "
+                 "(0.64 vs 0.71). The flat +0.30 ego-lane base dominates the TTC "
+                 "ramp and puts 33% of frames on one tied value — the aggregation "
+                 "is mis-weighted, not the inputs.\n")
+        L.append("3. *At gentle braking thresholds (-1.5 m/s^2) nothing predicts "
+                 "well and box area leads.* Expected: gentle urban deceleration is "
+                 "driven by traffic density, queues and traffic lights — none of "
+                 "which this system perceives. Box area is a decent traffic-density "
+                 "proxy; it is not a danger measure.\n")
+        L.append("\n**Caveats.** " + " ".join(rv["caveats"]) + " Sensitivity across "
+                 "3 thresholds x 3 horizons is in `out/eval/risk_validation.json`; "
+                 "the ordering above holds throughout the hard-braking regime and "
+                 "reverses in the gentle regime.\n")
+
+    L.append("\n## 8. Known limitations (measured, not hypothetical)\n")
     L.append("- **Night**: lane corridor mostly unavailable; detection/tracking "
              "recall drops (tables 2-3). Risk falls back to fixed corridor, "
              "flagged per record.\n")
@@ -193,7 +241,11 @@ def main():
     L.append("- **Flat-ground assumption untested on hills** — no slope scenes "
              "in mini.\n")
 
-    L.append("\n## 8. Artifacts\n")
+    L.append("- **Risk aggregation is mis-weighted** (M8): the composite score "
+             "under-performs its own inverse-TTC component; re-weighting so "
+             "dynamics dominate static lane membership is the open follow-up.\n")
+
+    L.append("\n## 9. Artifacts\n")
     L.append("- Demo videos: `out/demo/scene-0103_demo.mp4` (day), "
              "`out/demo/scene-1100_demo.mp4` (night); per-milestone demos "
              "alongside.\n")

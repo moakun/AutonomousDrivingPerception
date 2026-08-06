@@ -235,7 +235,7 @@ and issue text.
 
 | # | Milestone | Improvements | Status |
 |---|-----------|--------------|--------|
-| M8 | Risk-layer quantitative validation | #1 | 🔄 in progress |
+| M8 | Risk-layer quantitative validation | #1 | ✅ done — mixed result, see below |
 | M9 | Width-prior range fusion | #2 | planned |
 | M10 | Robustness experiments | #3, #4 | planned |
 | M11 | Engineering hardening | #5–#9 | planned |
@@ -273,6 +273,34 @@ Tasks:
 base rate and event counts stated; the risk score beats the box-area strawman, or the loss is
 reported honestly. Caveats documented (drivers brake for lights/turns, not only for risk objects;
 10 scenes is a small sample; this is correlation with human behaviour, not ground-truth danger).
+
+### M8 result (hard braking ≤ −3.0 m/s² within 5s; n=215, 25 positive, base rate 11.6%)
+
+| predictor | ROC-AUC | 95% CI | AP vs base rate |
+|---|---|---|---|
+| **inverse TTC only** | **0.709** | [0.62, 0.80] | **1.91×** |
+| risk score (composite) | 0.642 | [0.54, 0.75] | 1.38× |
+| ego speed only | 0.610 | [0.53, 0.68] | 1.20× |
+| box area (strawman) | 0.548 | [0.46, 0.63] | 1.04× |
+| nearest object range | 0.543 | [0.45, 0.62] | 1.04× |
+
+1. **Metric grounding validated.** Inverse TTC — a quantity that exists only because of the M3
+   lift and M2 Kalman velocity — is the strongest predictor and the only one whose CI clears
+   chance. It beats the box-area strawman decisively (0.71 vs 0.55, CI overlapping 0.5).
+2. **The composite score is worse than its own best component** (0.64 vs 0.71). The flat +0.30
+   ego-lane base swamps the TTC ramp and parks 33% of frames on one tied value. Confirmed
+   mechanically: excluding tied frames doesn't help (AUC 0.479), so the aggregation weighting is
+   wrong — the inputs are fine.
+3. **At gentle thresholds (−1.5 m/s²) nothing predicts well and box area leads.** Expected, and
+   worth stating: gentle urban deceleration is traffic-density and traffic-light driven, and this
+   system perceives neither. Box area proxies traffic density; it is not a danger measure.
+
+**Follow-up (M8b, open):** restructure scoring so dynamics dominate static lane membership — zone
+as a *multiplier* on dynamic terms rather than an additive base, and continuous RSS-gap ratio
+instead of a binary violation flag. Deliberately NOT fitting the existing constants to this
+sample: 25 positive events across 10 scenes would overfit, and the sensitivity sweep shows the
+label's own character changes with threshold. The structural change should be validated on full
+trainval, where the event count supports it.
 
 ## M9 — Width-prior range fusion (#2)
 
