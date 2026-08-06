@@ -119,11 +119,48 @@ def main():
                  f"{pct(rec['0-30m'])} | {pct(rec['30-50m'])} | {pct(rec['50m+'])} |\n")
 
     L.append("\n## 4. Metric lift (range error vs 3D GT)\n")
-    L.append("M3 target: median relative error <=15% at 10-30m — **met: "
+    L.append("Current default lift: **IPM fused with a class width prior** "
+             "(M9) — IPM below 12m, width beyond. M3 target: median relative "
+             "error <=15% at 10-30m — **met: "
              f"{pct(ipm['m3_target']['kf_rel_median_10_30m'])}** (KF-smoothed).\n")
-    L.append("Raw-lift comparison (identical matched pairs, "
-             f"n={dep['n_pairs']}):\n")
-    L.append("| GT range | IPM med | depth med | hybrid med | gt/depth ratio |\n"
+    L.append("\nEnd-to-end (Kalman-smoothed, current system):\n\n")
+    L.append("| GT range | n | range err median | p90 | velocity err median |\n"
+             "|---|---|---|---|---|\n")
+    for b, s in ipm["bins"].items():
+        vel = (f"{s['vel_err_median']:.2f} m/s"
+               if s.get("vel_err_median") is not None else "n/a")
+        L.append(f"| {b} | {s['n']} | {pct(s['kf_rel_median'])} | "
+                 f"{pct(s['kf_rel_p90'])} | {vel} |\n")
+
+    try:
+        wf = load("width_fusion.json")
+    except FileNotFoundError:
+        wf = None
+    if wf:
+        L.append(f"\n**M9 — why the lift changed** (raw single-frame estimates, "
+                 f"identical matched pairs, n={wf['n_pairs']}):\n\n")
+        L.append("| GT range | IPM alone (old) | width alone | **fused (new)** |\n"
+                 "|---|---|---|---|\n")
+        for b, s in wf["by_range"].items():
+            L.append(f"| {b} | {pct(s['ipm'][0])} | {pct(s['width'][0])} | "
+                     f"**{pct(s['fused'][0])}** |\n")
+        L.append("\nBy occlusion level (<50m): ")
+        L.append("; ".join(
+            f"{k}: IPM {pct(v['ipm_median'])} -> fused {pct(v['fused_median'])}"
+            for k, v in wf["by_visibility"].items()) + ".\n")
+        L.append("\nThe width cue survives leave-one-scene-out validation "
+                 "(8.2% held-out vs 7.5% in-sample), so it is not calibration "
+                 "contamination. Two measured corrections made it work: IPM's "
+                 "analytic noise model was 4-6x too optimistic (real sigma "
+                 "grows as r^2.51 with +11.5m bias at 40-60m), and fusion is "
+                 "dropped entirely beyond 12m because inverse-variance fusion "
+                 "assumes unbiased inputs.\n")
+
+    L.append(f"\n**M6 (superseded) — monocular depth comparison**, "
+             f"n={dep['n_pairs']}. The width prior beats this hybrid beyond "
+             "10m at ~39ms/frame lower cost, so depth is retained only for "
+             "reproducing the comparison:\n\n")
+    L.append("| GT range | IPM med | depth med | depth hybrid | gt/depth ratio |\n"
              "|---|---|---|---|---|\n")
     for b, s in dep["by_range"].items():
         L.append(f"| {b} | {pct(s['ipm']['median'])} | {pct(s['depth']['median'])} "
@@ -141,10 +178,10 @@ def main():
              "survivorship artifact — night detection only yields matched pairs "
              "on close, well-lit objects, so the night sample is skewed toward "
              "easy ranges (see the night recall drop in table 3).*\n")
-    L.append("\nVelocity (BEV KF vs nuScenes annotation velocity): median error "
-             "0.28 m/s at 0-10m, 2.3 m/s at 10-30m (`ipm_validation.json`). "
-             "M6 verdict: hybrid lift available (`use_depth=True`), live "
-             "pipeline keeps IPM — the TTC working range (<30m) is IPM's.\n")
+    L.append("\nVelocity is validated against nuScenes annotation velocities "
+             "(table above). The TTC trust gate tracks this curve and was "
+             "widened from 30m to 50m after M9, because 30-50m error is now "
+             "better than 10-30m was when the gate was first set.\n")
 
     L.append("\n## 5. Lanes (no vector GT in mini -> degradation stats)\n")
     L.append("| condition | corridor valid (smoothed) | width median |\n|---|---|---|\n")
@@ -203,19 +240,35 @@ def main():
                 L.append(f"| {name} | {m['roc_auc']:.3f} | [{lo:.2f}, {hi:.2f}] "
                          f"| {m['avg_precision']:.3f} | "
                          f"{m['ap_lift_over_base_rate']:.2f}x |\n")
+        ttc_auc = straw_auc = ours_auc = float("nan")
+        if hard:
+            p = hard[0]["predictors"]
+            ttc_auc = p["inverse TTC only"]["roc_auc"]
+            ours_auc = p["risk score (ours)"]["roc_auc"]
+            straw_auc = p["box area (strawman)"]["roc_auc"]
         L.append("\n**Findings.**\n")
-        L.append("1. *Metric grounding is validated.* Inverse TTC — which exists "
-                 "only because of the metric lift (M3) and Kalman velocity (M2) — "
-                 "is the strongest predictor of hard braking (AUC 0.68-0.71 across "
-                 "horizons, ~2x base rate on AP) and is the only predictor whose CI "
-                 "clears chance. It beats the box-area strawman the plan called "
-                 "worthless (0.55, CI includes 0.5).\n")
-        L.append("2. *The composite score is worse than its own best component.* "
-                 "Adding zone base + RSS + intent on top of TTC dilutes the signal "
-                 "(0.64 vs 0.71). The flat +0.30 ego-lane base dominates the TTC "
-                 "ramp and puts 33% of frames on one tied value — the aggregation "
-                 "is mis-weighted, not the inputs.\n")
-        L.append("3. *At gentle braking thresholds (-1.5 m/s^2) nothing predicts "
+        L.append(f"1. *Metric grounding is validated.* Inverse TTC — which exists "
+                 f"only because of the metric lift and Kalman velocity — is the "
+                 f"strongest predictor of hard braking (AUC {ttc_auc:.3f}, "
+                 f"{hard[0]['predictors']['inverse TTC only']['ap_lift_over_base_rate']:.1f}x "
+                 f"base rate on AP) and the only predictor whose CI clears chance. "
+                 f"It beats the box-area strawman the plan called worthless "
+                 f"({straw_auc:.3f}, CI includes 0.5).\n")
+        L.append("2. *Improving the lift improved exactly the predictors that "
+                 "depend on it.* Re-running this harness after M9's fused lift "
+                 "raised inverse-TTC AUC 0.709 -> 0.737 and its AP 1.91x -> 2.42x "
+                 "base rate, while the box-area strawman — which uses no metric "
+                 "information — stayed bit-identical at 0.548. That is the "
+                 "causal link between metric grounding and risk quality, measured "
+                 "rather than asserted.\n")
+        L.append(f"3. *The composite score is still worse than its own best "
+                 f"component* ({ours_auc:.3f} vs {ttc_auc:.3f}). The flat +0.30 "
+                 "ego-lane base dominates the TTC ramp and puts 33% of frames on "
+                 "one tied value; excluding tied frames does not help (AUC 0.479), "
+                 "so the aggregation is mis-weighted, not the inputs. Restructuring "
+                 "it (zone as a multiplier on dynamics, continuous RSS ratio) is "
+                 "the open follow-up, deliberately not fitted to 25 events.\n")
+        L.append("4. *At gentle braking thresholds (-1.5 m/s^2) nothing predicts "
                  "well and box area leads.* Expected: gentle urban deceleration is "
                  "driven by traffic density, queues and traffic lights — none of "
                  "which this system perceives. Box area is a decent traffic-density "
@@ -229,10 +282,11 @@ def main():
     L.append("- **Night**: lane corridor mostly unavailable; detection/tracking "
              "recall drops (tables 2-3). Risk falls back to fixed corridor, "
              "flagged per record.\n")
-    L.append("- **IPM occluded-bottom drift**: barrier-occluded boxes bias range "
-             "high with phantom velocity; chi-square innovation gate catches "
-             "teleports, gradual drift remains (documented in M3; depth does "
-             "NOT fix it — measured in M6).\n")
+    L.append("- **IPM occluded-bottom drift** (largely FIXED in M9): barrier-"
+             "occluded boxes biased range high with phantom velocity. Depth did "
+             "not fix it (M6); the width prior did — occluded-object error "
+             "13.2% -> 5.5%. IPM is still used below 12m, where the effect is "
+             "small.\n")
     L.append("- **Depth near-field bias**: DA-V2-metric overestimates <10m "
              "(58% median) with a nonlinear, non-calibratable profile "
              "(gt/depth 0.63->1.06).\n")
