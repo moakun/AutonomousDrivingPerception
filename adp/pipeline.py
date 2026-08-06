@@ -95,21 +95,25 @@ class PerceptionPipeline:
 
         t0 = time.perf_counter()
         confirmed = self.tracker.step(dets, dt)
-        lift = GroundPlaneLift(cam.camera, cam.T_ego_from_cam)
+        # `ground` is the raw homography, used for anything painted ON the road
+        # (lane markings). Object range uses the fused/hybrid lift, whose size
+        # priors are meaningless for lane pixels.
+        ground = GroundPlaneLift(cam.camera, cam.T_ego_from_cam)
+        lift = ground
         if self.width is not None:
             from adp.lift.fused import FusedLift
-            lift = FusedLift(lift, self.width)
+            lift = FusedLift(ground, self.width)
         elif self.depth is not None:
             from adp.lift.hybrid import HybridLift
             self.depth.compute(img_bgr)
-            lift = HybridLift(lift, self.depth)
+            lift = HybridLift(ground, self.depth)
         update_bev_states(confirmed, lift, cam.T_global_from_ego, dt)
         timings["track_lift"] = (time.perf_counter() - t0) * 1e3
 
         if self._frame_i % self.lane_stride == 0:
             t0 = time.perf_counter()
             mask = self.segmenter.lane_mask(img_bgr)
-            self._lane_lines = cluster_and_fit(mask_to_bev_points(mask, lift))
+            self._lane_lines = cluster_and_fit(mask_to_bev_points(mask, ground))
             measured = find_ego_corridor(self._lane_lines)
             corridor = self.corridor_smoother.update(measured, dt * self.lane_stride)
             timings["lanes"] = (time.perf_counter() - t0) * 1e3

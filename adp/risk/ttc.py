@@ -9,8 +9,14 @@ Position/velocity sigmas are read from the BEV Kalman covariance (plus the ego
 velocity filter's) — the plan rule that every metric estimate carries the
 uncertainty it inherited.
 
-Trust gating: M3 measured range error ~12% at 10-30m but 24%+ beyond, so TTC
-beyond MAX_TRUST_RANGE is flagged low-confidence rather than hidden.
+Trust gating: TTC beyond MAX_TRUST_RANGE is flagged low-confidence rather than
+hidden. The threshold tracks the MEASURED lift error curve and moved once that
+curve improved:
+  - 30m, when the IPM-only lift gave 12% range / 2.3 m/s velocity error at
+    10-30m but 24% / 4.7 m/s beyond;
+  - 50m now, after the M9 fused lift cut 30-50m error to 8.6% range /
+    1.5 m/s velocity — better than the 10-30m band was when the gate was set.
+Never set this by intuition; re-derive it from out/eval/ipm_validation.json.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ from dataclasses import dataclass
 # the front bumper. Approximation for the Renault Zoe data-collection car.
 EGO_FRONT_M = 3.5
 MIN_CLOSING_MS = 0.3   # below this, "not closing" (avoids TTC -> infinity noise)
-MAX_TRUST_RANGE = 30.0  # from the M3 validation error curve
+MAX_TRUST_RANGE = 50.0  # from the M9-refreshed validation error curve
 
 
 @dataclass

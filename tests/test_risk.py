@@ -29,8 +29,14 @@ class TestTtc:
         assert r.sigma_s == pytest.approx(expect)
 
     def test_far_range_flagged_untrustworthy(self):
-        r = compute_ttc(45.0, -10.0, 2.0, 1.0)
+        from adp.risk.ttc import MAX_TRUST_RANGE
+        r = compute_ttc(MAX_TRUST_RANGE + 15.0, -10.0, 2.0, 1.0)
         assert r is not None and not r.trustworthy
+
+    def test_inside_trust_range_is_trusted(self):
+        from adp.risk.ttc import MAX_TRUST_RANGE
+        r = compute_ttc(MAX_TRUST_RANGE - 5.0, -10.0, 2.0, 1.0)
+        assert r is not None and r.trustworthy
 
     def test_huge_ci_flagged(self):
         r = compute_ttc(25.0, -1.0, 5.0, 3.0)  # sigma dwarfs the estimate
