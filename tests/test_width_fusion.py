@@ -192,8 +192,10 @@ class TestFusedLift:
         assert xy is not None and np.isfinite(r)
 
     def test_bearing_preserved(self):
+        """In the fused (near-field) band the bearing comes from IPM, whose
+        horizontal centre survives vertical truncation."""
         fused, cam, T = self.make()
-        box = box_for(cam, T, x=25.0, y=4.0)
+        box = box_for(cam, T, x=9.0, y=2.0)
         xy_ipm, _ = fused.ipm.lift_box_bottom(box)
         xy, _ = fused.lift_box_bottom(box, "car")
         # Same direction from ego, different magnitude.
