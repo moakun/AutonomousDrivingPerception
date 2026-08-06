@@ -31,7 +31,8 @@ class HybridLift:
         self.depth = depth
         self._last_source = "ipm"
 
-    def lift_box_bottom(self, xyxy: np.ndarray):
+    def lift_box_bottom(self, xyxy: np.ndarray, category: str | None = None,
+                        state: dict | None = None):
         xy, rng = self.ipm.lift_box_bottom(xyxy)
         if xy is not None and rng < SWITCH_RANGE_M:
             self._last_source = "ipm"

@@ -11,7 +11,7 @@ class StubIpm:
         self.camera = None
         self.T_ego_from_cam = None
 
-    def lift_box_bottom(self, xyxy):
+    def lift_box_bottom(self, xyxy, category=None):
         if self.xy is None:
             return None, float("nan")
         return self.xy, float(np.linalg.norm(self.xy))

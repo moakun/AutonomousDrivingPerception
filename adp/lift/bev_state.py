@@ -70,7 +70,10 @@ def update_bev_states(
         if state is not None:
             state.kf.predict(dt)
 
-        xy_ego, range_m = lift.lift_box_bottom(track.xyxy)
+        # track.extra carries per-track lift state (e.g. the fused lift's
+        # occlusion EMA); it lives and dies with the track.
+        xy_ego, range_m = lift.lift_box_bottom(track.xyxy, track.category,
+                                               track.extra)
         if xy_ego is None:
             continue
         xy_global = T_global_from_ego.apply([*xy_ego, 0.0])[0][:2]

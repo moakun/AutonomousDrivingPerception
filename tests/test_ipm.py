@@ -56,13 +56,27 @@ class TestGroundPlaneLift:
         cam, T = nuscenes_like_rig()
         assert GroundPlaneLift(cam, T).cam_height == pytest.approx(1.5)
 
-    def test_meas_std_grows_quadratically(self):
+    def test_analytic_meas_std_grows_quadratically(self):
         cam, T = nuscenes_like_rig()
         lift = GroundPlaneLift(cam, T)
         # 20m and 60m are both inside the clamp's active band for this rig.
-        s20, s60 = lift.range_meas_std(20.0), lift.range_meas_std(60.0)
+        s20 = lift.range_meas_std(20.0, measured=False)
+        s60 = lift.range_meas_std(60.0, measured=False)
         assert s60 > s20
         assert s60 / s20 == pytest.approx(9.0, rel=0.05)  # r^2 scaling: (60/20)^2
+
+    def test_measured_meas_std_is_default_and_larger(self):
+        from adp.lift.ipm import MEASURED_P
+        cam, T = nuscenes_like_rig()
+        lift = GroundPlaneLift(cam, T)
+        # The measured model is the default and must be more pessimistic than
+        # the pixel-jitter-only analytic one at working ranges.
+        for r in (20.0, 30.0, 50.0):
+            assert lift.range_meas_std(r) > lift.range_meas_std(r, measured=False)
+        # 15m and 45m are both inside the clamp's active band.
+        ratio = lift.range_meas_std(45.0) / lift.range_meas_std(15.0)
+        assert ratio == pytest.approx(3.0**MEASURED_P, rel=0.05)
+        assert lift.range_meas_std(200.0) == 40.0  # clamped, not unbounded
 
     def test_box_bottom_range(self):
         cam, T = nuscenes_like_rig()
