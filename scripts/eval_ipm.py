@@ -68,7 +68,14 @@ def bin_name(lo, hi):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--demo-scene", default="scene-0061")
+    parser.add_argument("--lift", choices=("ipm", "fused"), default="fused",
+                        help="fused = M9 IPM+width-prior (current default)")
+    parser.add_argument("--tag", default="validation")
     args = parser.parse_args()
+    width_prior = None
+    if args.lift == "fused":
+        from adp.lift.width_prior import WidthPriorLift
+        width_prior = WidthPriorLift.from_calibration(use_aspect=True)
 
     source = NuScenesSource(verbose=False)
     detector = Detector(weights="yolo11m.pt", imgsz=960, conf=0.1)
@@ -96,6 +103,9 @@ def main():
 
             confirmed = tracker.step(dets, dt)
             lift = GroundPlaneLift(cam.camera, cam.T_ego_from_cam)
+            if width_prior is not None:
+                from adp.lift.fused import FusedLift
+                lift = FusedLift(lift, width_prior)
             update_bev_states(confirmed, lift, cam.T_global_from_ego, dt)
 
             if cam.is_keyframe and cam.sample_token in gt_frames:
@@ -108,7 +118,8 @@ def main():
                     gt_range = float(np.linalg.norm(gt_xy))
                     pos_e, vel_e = state.in_ego(cam.T_global_from_ego)
                     kf_range = float(np.linalg.norm(pos_e))
-                    raw_xy, raw_range = lift.lift_box_bottom(track.xyxy)
+                    raw_xy, raw_range = lift.lift_box_bottom(track.xyxy,
+                                                             track.category)
 
                     row = {
                         "scene": scene_name,
@@ -203,9 +214,11 @@ def main():
     report["m3_target"] = {"kf_rel_median_10_30m": target, "verdict": verdict}
     print(f"\nM3 target (median rel err <= 15% @ 10-30m): {target:.1%} -> {verdict}")
 
-    with open(OUT_JSON, "w") as f:
+    report["lift"] = args.lift
+    out_path = OUT_JSON.replace("validation", args.tag)
+    with open(out_path, "w") as f:
         json.dump(report, f, indent=2)
-    print(f"saved: {os.path.abspath(OUT_JSON)}")
+    print(f"saved: {os.path.abspath(out_path)}")
 
 
 if __name__ == "__main__":

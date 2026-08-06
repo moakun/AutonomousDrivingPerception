@@ -107,12 +107,14 @@ class TestFusedLift:
 
     def test_near_field_fuses_and_tightens(self):
         fused, cam, T = self.make()
-        box = box_for(cam, T, x=8.0, width_m=2.0)   # inside FUSE_RANGE_M
+        # 11m: inside FUSE_RANGE_M and above the 0.3m sigma floor, so the
+        # variance comparison below is not clamped.
+        box = box_for(cam, T, x=11.0, width_m=2.0)
         _, r = fused.lift_box_bottom(box, "car")
-        assert r == pytest.approx(8.0, abs=1.0)
+        assert r == pytest.approx(11.0, abs=1.2)
         assert fused.last_source == "fused"
         # Fusing two independent cues must beat either alone.
-        s_ipm = fused.ipm.range_meas_std(8.0)
+        s_ipm = fused.ipm.range_meas_std(11.0)
         _, _, s_w = fused.width.lift_box(box, "car", cam, T)
         assert fused.range_meas_std(r) < min(s_ipm, s_w)
 

@@ -113,9 +113,14 @@ class FusedLift:
         if occluded:
             self.n_occluded += 1
 
-        # A truncated bottom also contaminates the CONDITIONED width estimate
-        # (72-82% of it is height-derived), so fall back to the immune one.
-        use_c = np.isfinite(r_c) and r_c > 0 and not occluded
+        # The conditioned estimate is used even when truncation is suspected.
+        # Substituting the immune (unconditioned) estimate there was tried and
+        # MEASURED WORSE: it costs 11.7% -> 33% spread on every sample the gate
+        # touches, and the gate fires on ~30% of samples, which outweighs the
+        # ~20% truncation bias it avoids (10-30m bin: 6.3% -> 10.4%). The immune
+        # estimate remains the detector — its job — and the flag still
+        # down-weights IPM in the near field.
+        use_c = np.isfinite(r_c) and r_c > 0
         r_w, var_w, xy_w = (r_c, s_c**2, xy_c) if use_c else (r_u, s_u**2, xy_u)
 
         if r_i >= FUSE_RANGE_M:

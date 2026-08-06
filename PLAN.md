@@ -236,7 +236,7 @@ and issue text.
 | # | Milestone | Improvements | Status |
 |---|-----------|--------------|--------|
 | M8 | Risk-layer quantitative validation | #1 | ✅ done — mixed result, see below |
-| M9 | Width-prior range fusion | #2 | planned |
+| M9 | Width-prior range fusion | #2 | ✅ done — adopted as default lift |
 | M10 | Robustness experiments | #3, #4 | planned |
 | M11 | Engineering hardening | #5–#9 | planned |
 
@@ -315,6 +315,47 @@ use IPM-vs-width disagreement as an occlusion detector. Re-run the M3 harness fo
 occluded-object bins are the ones that must improve); if it doesn't help, document like M6.
 Secondary win if it lets the velocity-plausibility gate in `scoring.py` become a backstop rather
 than a load-bearing patch.
+
+### M9 result — adopted as the default lift (`use_width=True`)
+
+Median relative range error, n=1480 matched pairs:
+
+| GT range | IPM (old default) | width alone | **fused (new default)** | M6 depth hybrid |
+|---|---|---|---|---|
+| 0–10m | 4.1% | 5.1% | **3.7%** | 4.1% |
+| 10–30m | 11.0% | 6.3% | **6.2%** | 10.6% |
+| 30–50m | 22.8% | 7.6% | **7.6%** | 14.6% |
+| 50m+ | 39.3% | 9.4% | **9.4%** | 15.4% |
+
+By visibility (<50m): occluded (vis 2–3) **13.2% → 5.5% (−59%)**; clear (vis 4) 12.6% → 6.7%
+(−47%). The hypothesis was that occluded objects would improve; they improved most, but clear
+objects improved nearly as much.
+
+Five findings, each forced by the previous result:
+
+1. **The width cue is far stronger than expected** and survives leave-one-scene-out validation
+   (8.2% held-out vs 7.5% in-sample — only +10% optimism), so it is not calibration contamination.
+2. **Aspect-ratio conditioning is a trap if taken at face value.** It cuts spread 32.6% → 11.7%
+   for cars, but substituting W = a + b·(w/h) into z = f·W/w_px gives z = f·a/w_px + f·b/h_px —
+   72–82% of the estimate is *height*-derived, the very dimension occlusion truncates. Two
+   estimates are therefore maintained: conditioned (accurate) and unconditioned (truncation-immune).
+3. **Single-frame occlusion detection is impossible** at 33% spread; the gate accumulates a
+   per-track EMA of normalised disagreement instead, exploiting the fact that barriers persist
+   while noise does not.
+4. **IPM's analytic noise model was fantasy** — measured σ is 4–6× larger and grows as r^2.51
+   (`scripts/calibrate_lift_noise.py`, n=1480), with large positive *bias* at range (+11.5m at
+   40–60m). Now the default in `GroundPlaneLift.range_meas_std`; the analytic form is retained
+   behind `measured=False`.
+5. **Fusion loses to width alone beyond ~12m** because inverse-variance fusion assumes unbiased
+   inputs and IPM is biased — any non-zero weight drags the estimate long. Hence the switch:
+   fuse below 12m, drop IPM above.
+
+Also measured and rejected: substituting the truncation-immune estimate when the gate fires. It
+costs 11.7% → 33% spread on ~30% of samples, outweighing the ~20% truncation bias it avoids
+(10–30m bin degraded 6.3% → 10.4%). The immune estimate stays a detector only.
+
+**Consequence for M6:** the width prior supersedes the depth hybrid — better beyond 10m and
+~39ms/frame cheaper. `use_depth` is retained only to reproduce the M6 comparison.
 
 ## M10 — Robustness experiments (#3, #4)
 
