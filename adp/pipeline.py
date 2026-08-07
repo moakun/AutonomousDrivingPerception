@@ -23,7 +23,7 @@ from adp.lift.bev_state import update_bev_states
 from adp.lift.ipm import GroundPlaneLift
 from adp.risk.assign import assign_lane, crossing_intent
 from adp.risk.rss import rss_min_gap
-from adp.risk.scoring import RiskRecord, ego_risk, score_object
+from adp.risk.scoring import BucketHysteresis, RiskRecord, ego_risk, score_object
 from adp.risk.ttc import compute_ttc
 from adp.track.bytetrack import ByteTracker, Track
 from adp.track.kalman import ConstantVelocityKalman
@@ -71,6 +71,8 @@ class PerceptionPipeline:
         self._frame_i = 0
         self._prev_ts: int | None = None
         self._lane_lines: list = []
+        self._since_lane_s = 0.0
+        self.hysteresis = BucketHysteresis()
 
     def step(self, cam: CamFrame, img_bgr: np.ndarray) -> PipelineOutput:
         import time
@@ -110,16 +112,23 @@ class PerceptionPipeline:
         update_bev_states(confirmed, lift, cam.T_global_from_ego, dt)
         timings["track_lift"] = (time.perf_counter() - t0) * 1e3
 
+        # Improvement #8: the smoother's hold timer must advance in WALL time.
+        # Previously skip frames passed dt=0.0, so a 1s hold only counted
+        # lane-update frames — with lane_stride=2 the corridor survived ~2s of
+        # real time, twice the intended staleness bound.
+        self._since_lane_s += dt
         if self._frame_i % self.lane_stride == 0:
             t0 = time.perf_counter()
             mask = self.segmenter.lane_mask(img_bgr)
             self._lane_lines = cluster_and_fit(mask_to_bev_points(mask, ground))
             measured = find_ego_corridor(self._lane_lines)
-            corridor = self.corridor_smoother.update(measured, dt * self.lane_stride)
+            corridor = self.corridor_smoother.update(measured, self._since_lane_s)
+            self._since_lane_s = 0.0
             timings["lanes"] = (time.perf_counter() - t0) * 1e3
         else:
+            # No new measurement, but real time still passed.
             corridor = self.corridor_smoother.update(
-                EgoCorridor(None, None, None), 0.0)  # hold, no time charged
+                EgoCorridor(None, None, None), dt)
         self._frame_i += 1
 
         risk = self._risk_records(confirmed, corridor, cam.T_global_from_ego)
@@ -181,5 +190,9 @@ class PerceptionPipeline:
                 intent_cross_s=intent,
                 object_speed_ms=float(np.linalg.norm(state.kf.velocity)),
             )))
+        # Debounce bucket transitions so labels don't flicker at thresholds.
+        for r in records:
+            r.bucket = self.hysteresis.apply(r.track_id, r.bucket, r.score)
+        self.hysteresis.forget(r.track_id for r in records)
         records.sort(key=lambda r: -r.score)
         return records

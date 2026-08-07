@@ -20,10 +20,12 @@ covers the lateral dimension qualitatively.
 from __future__ import annotations
 
 # Common parameter choices from the RSS literature (all m/s^2 except rho).
-RHO_S = 0.5        # response time
-A_ACCEL = 3.5      # max ego acceleration during response
-B_MIN = 4.0        # min guaranteed ego braking
-B_MAX = 8.0        # max assumed front-vehicle braking
+from adp.config import CONFIG
+
+RHO_S = CONFIG.risk.rho_s        # response time
+A_ACCEL = CONFIG.risk.a_accel    # max ego acceleration during response
+B_MIN = CONFIG.risk.b_min        # min guaranteed ego braking
+B_MAX = CONFIG.risk.b_max        # max assumed front-vehicle braking
 
 
 def rss_min_gap(v_ego_ms: float, v_front_ms: float) -> float:

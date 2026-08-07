@@ -1,0 +1,64 @@
+# ADP configuration (improvement #5).
+# These values reproduce the current committed behaviour exactly — the file is
+# here so experiments can override single values without touching code, and so
+# every results JSON can record which configuration produced it.
+#
+# Override with: AdpConfig fields are grouped by section; unknown keys ignored.
+
+tracker:
+  high_thresh: 0.5
+  low_thresh: 0.1
+  new_track_thresh: 0.6
+  match_iou: 0.2
+  match_iou_low: 0.4
+  n_init: 3
+  max_misses: 12
+
+lift:
+  # Measured IPM noise sigma(r) = c * r^p  (scripts/calibrate_lift_noise.py)
+  ipm_sigma_c: 0.001451
+  ipm_sigma_p: 2.51
+  # M9: above this range IPM contributes bias, not information
+  fuse_range_m: 12.0
+  ipm_inflate: 4.0
+  occlusion_k: 2.5
+  occlusion_ema_alpha: 0.25
+  occlusion_ema_k: 0.8
+  width_pixel_noise: 4.0
+  min_width_px: 10.0
+  depth_switch_range_m: 30.0    # M6 hybrid, superseded by the width prior
+  depth_rel_std: 0.15
+  bev_vel_std: 10.0
+  bev_process_std: 3.0
+  gate_md2: 13.8
+  max_rejects: 6
+
+lanes:
+  x_min: 4.0
+  x_max: 45.0
+  y_half: 12.0
+  slice_m: 2.0
+  gap_m: 1.0
+  link_m: 1.2
+  max_link_slices: 4            # bridges dashed-marking gaps
+  max_link_lateral: 2.5
+  min_span_slices: 5
+  min_chain: 3
+  smoother_alpha: 0.3
+  hold_s: 1.0
+  jump_m: 1.0
+
+risk:
+  ego_front_m: 3.5
+  min_closing_ms: 0.3
+  max_trust_range: 50.0         # re-derived from the M9 lift error curve
+  rho_s: 0.5                    # RSS response time
+  a_accel: 3.5
+  b_min: 4.0
+  b_max: 8.0
+  ttc_critical_s: 5.0
+  ttc_weight: 0.45
+  rss_weight: 0.25
+  intent_weight: 0.20
+  fallback_half_width: 1.85
+  confirm_frames: 2

@@ -21,8 +21,10 @@ from adp.calib.camera import CameraModel, SE3, ray_plane_intersection
 # scripts/calibrate_lift_noise.py (n=1480 matched pairs). The exponent lands at
 # 2.51 rather than the theoretical 2.0 because occlusion-driven bias grows
 # faster than pixel jitter.
-MEASURED_C = 0.001451
-MEASURED_P = 2.51
+from adp.config import CONFIG
+
+MEASURED_C = CONFIG.lift.ipm_sigma_c
+MEASURED_P = CONFIG.lift.ipm_sigma_p
 
 
 class GroundPlaneLift:
@@ -85,7 +87,7 @@ class GroundPlaneLift:
         """
         if measured:
             std = MEASURED_C * range_m**MEASURED_P
-            return float(np.clip(std, 0.3, 40.0))
+            return float(np.clip(std, *CONFIG.lift.ipm_sigma_clip))
         f = self.camera.K[1, 1]
         std = pixel_noise * range_m**2 / (f * max(self.cam_height, 0.1))
         return float(np.clip(std, 0.3, 8.0))

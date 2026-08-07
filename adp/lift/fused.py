@@ -31,10 +31,12 @@ import numpy as np
 from adp.lift.ipm import GroundPlaneLift
 from adp.lift.width_prior import WidthPriorLift
 
-OCCLUSION_K = 2.5       # single-frame gate: sigmas of disagreement
-IPM_INFLATE = 4.0       # variance multiplier applied to IPM when suspected
-EMA_ALPHA = 0.25        # ~10-frame memory for the temporal gate
-EMA_K = 0.8             # persistent normalised disagreement that trips it
+from adp.config import CONFIG
+
+OCCLUSION_K = CONFIG.lift.occlusion_k        # single-frame gate: sigmas
+IPM_INFLATE = CONFIG.lift.ipm_inflate        # variance x when suspected
+EMA_ALPHA = CONFIG.lift.occlusion_ema_alpha  # ~10-frame memory
+EMA_K = CONFIG.lift.occlusion_ema_k          # persistent disagreement to trip
 
 # Beyond this IPM reading, IPM is dropped entirely rather than fused.
 # Inverse-variance fusion is optimal for UNBIASED estimators, and IPM is not:
@@ -44,7 +46,7 @@ EMA_K = 0.8             # persistent normalised disagreement that trips it
 # 3.2/6.2/7.6/9.4% median error by range bin — better than IPM alone
 # (4.1/11.0/22.8/39.3), width alone (5.1/6.3/7.6/9.4) and full fusion
 # (3.2/8.9/11.0/13.8) in every bin.
-FUSE_RANGE_M = 12.0
+FUSE_RANGE_M = CONFIG.lift.fuse_range_m
 
 
 class FusedLift:

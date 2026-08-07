@@ -25,9 +25,11 @@ from dataclasses import dataclass
 
 # Longitudinal offset from the nuScenes ego-frame origin (rear-axle area) to
 # the front bumper. Approximation for the Renault Zoe data-collection car.
-EGO_FRONT_M = 3.5
-MIN_CLOSING_MS = 0.3   # below this, "not closing" (avoids TTC -> infinity noise)
-MAX_TRUST_RANGE = 50.0  # from the M9-refreshed validation error curve
+from adp.config import CONFIG
+
+EGO_FRONT_M = CONFIG.risk.ego_front_m
+MIN_CLOSING_MS = CONFIG.risk.min_closing_ms  # below this, "not closing"
+MAX_TRUST_RANGE = CONFIG.risk.max_trust_range  # from the M9-refreshed curve
 
 
 @dataclass
