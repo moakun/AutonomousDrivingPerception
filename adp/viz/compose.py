@@ -114,7 +114,10 @@ def compose_frame(img_bgr: np.ndarray, out: PipelineOutput, cam) -> np.ndarray:
     cv2.rectangle(banner, (0, 0), (CAM_W, 34), (25, 25, 25), -1)
     cam_img = cv2.addWeighted(banner, 0.75, cam_img, 0.25, 0)
     status_text, status_color = STATUS[bucket_of(out.ego_risk)]
-    cv2.putText(cam_img, f"Your speed: {kmh(out.ego_speed_ms)} km/h",
+    speed_text = (f"Your speed: {kmh(out.ego_speed_ms)} km/h"
+                  if out.ego_speed_ms is not None else
+                  "Distances are estimates (uncalibrated camera)")
+    cv2.putText(cam_img, speed_text,
                 (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
                 cv2.LINE_AA)
     (tw, _), _ = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
@@ -155,7 +158,8 @@ def compose_frame(img_bgr: np.ndarray, out: PipelineOutput, cam) -> np.ndarray:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
     # Minimum safe following distance at current speed (RSS), plain words.
     from adp.risk.rss import rss_min_gap
-    d_rss = rss_min_gap(out.ego_speed_ms, 0.0)
+    # Undefined without localisation (no absolute ego speed), so not drawn.
+    d_rss = rss_min_gap(out.ego_speed_ms, 0.0) if out.ego_speed_ms else 0.0
     if d_rss > 2.0:
         radius = int((d_rss + 3.5) * canvas.scale)
         cv2.ellipse(bev, (eu, ev), (radius, radius), 0, 245, 295,

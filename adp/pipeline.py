@@ -45,7 +45,8 @@ class PerceptionPipeline:
                  segmenter: LaneSegmenter | None = None,
                  lane_stride: int = 2,
                  use_depth: bool = False,
-                 use_width: bool = True):
+                 use_width: bool = True,
+                 localization: bool = True):
         """use_width (M9, default ON): fuse the ground-plane lift with a
         class width prior — IPM below 12m, width beyond. Free (no extra
         inference) and better in every range bin: median range error
@@ -57,6 +58,12 @@ class PerceptionPipeline:
         self.detector = detector or Detector(weights="yolo11m.pt", imgsz=960, conf=0.1)
         self.segmenter = segmenter or LaneSegmenter()
         self.lane_stride = lane_stride
+        # Without localisation (arbitrary footage) the BEV filters run in the
+        # ego frame: TTC and closing speed stay valid because both are
+        # relative, but absolute object speed and RSS are unrecoverable and
+        # are suppressed rather than fabricated. M10 measured the cost:
+        # range accuracy is unaffected.
+        self.localization = localization
         self.depth = None
         if use_depth:
             from adp.lift.depth import DepthLift
@@ -138,7 +145,8 @@ class PerceptionPipeline:
             lane_lines=self._lane_lines,
             risk=risk,
             ego_risk=ego_risk(risk),
-            ego_speed_ms=float(np.linalg.norm(self.ego_kf.velocity)),
+            ego_speed_ms=(float(np.linalg.norm(self.ego_kf.velocity))
+                          if self.localization else None),
             timings_ms=timings,
         )
 
@@ -165,12 +173,16 @@ class PerceptionPipeline:
                 vel_sigma_ms=float(np.linalg.norm(state.kf.velocity_std())) + ego_vel_sigma,
             )
 
-            # RSS: front-object speed along ego travel direction.
-            v_front_along = float((R_eg @ state.kf.velocity)[0])
-            rss_gap = rss_min_gap(float(np.linalg.norm(v_ego_g)), v_front_along)
-            gap = ttc.gap_m if ttc is not None else float(pos_e[0]) - 3.5
-            rss_violated = (assignment.zone.value == "ego" and gap > 0
-                            and gap < rss_gap)
+            # RSS needs ABSOLUTE ego and lead speeds, which require
+            # localisation; without it the envelope is undefined, not zero.
+            rss_gap, rss_violated = None, False
+            if self.localization:
+                v_front_along = float((R_eg @ state.kf.velocity)[0])
+                rss_gap = rss_min_gap(float(np.linalg.norm(v_ego_g)),
+                                      v_front_along)
+                gap = ttc.gap_m if ttc is not None else float(pos_e[0]) - 3.5
+                rss_violated = (assignment.zone.value == "ego" and gap > 0
+                                and gap < rss_gap)
 
             intent = None
             if t.category in ("pedestrian", "cyclist"):
@@ -188,7 +200,10 @@ class PerceptionPipeline:
                 rss_min_gap_m=rss_gap,
                 rss_violated=rss_violated,
                 intent_cross_s=intent,
-                object_speed_ms=float(np.linalg.norm(state.kf.velocity)),
+                # Without localisation this is speed RELATIVE to ego, so the
+                # plausibility gate must not judge it as an absolute speed.
+                object_speed_ms=(float(np.linalg.norm(state.kf.velocity))
+                                 if self.localization else 0.0),
             )))
         # Debounce bucket transitions so labels don't flicker at thresholds.
         for r in records:

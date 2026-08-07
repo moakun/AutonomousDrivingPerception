@@ -78,6 +78,8 @@ def replay_scene(
     use_localization: bool = True,
     gt_velocity: dict | None = None,
     seed: int = 0,
+    K_override: np.ndarray | None = None,
+    T_ego_cam_override: SE3 | None = None,
 ) -> ReplayResult:
     """Replay one scene under a perturbation. gt_velocity maps annotation
     token -> global velocity (m/s) when velocity validation is wanted."""
@@ -87,9 +89,13 @@ def replay_scene(
     prev_ts = None
 
     for fr in scene["frames"]:
-        cam_model = CameraModel(K=np.array(fr["K"]), width=fr["wh"][0],
-                                height=fr["wh"][1])
-        T_ego_cam = pitch_perturbed(SE3(np.array(fr["T_ego_cam"])), pitch_deg)
+        # Overrides let the footage path be replayed with ESTIMATED
+        # calibration while ground truth stays the dataset's.
+        K = np.array(fr["K"]) if K_override is None else K_override
+        cam_model = CameraModel(K=K, width=fr["wh"][0], height=fr["wh"][1])
+        base_T = (SE3(np.array(fr["T_ego_cam"])) if T_ego_cam_override is None
+                  else T_ego_cam_override)
+        T_ego_cam = pitch_perturbed(base_T, pitch_deg)
         T_glob_ego_true = SE3(np.array(fr["T_glob_ego"]))
         if use_localization:
             T_glob_ego = noisy_pose(T_glob_ego_true, pos_sigma_m,
