@@ -278,7 +278,60 @@ def main():
                  "the ordering above holds throughout the hard-braking regime and "
                  "reverses in the gentle regime.\n")
 
-    L.append("\n## 8. Known limitations (measured, not hypothetical)\n")
+    try:
+        pitch = load("pitch_sensitivity.json")
+        loc = load("localization.json")
+    except FileNotFoundError:
+        pitch = loc = None
+    if pitch and loc:
+        L.append("\n## 8. Robustness (M10)\n")
+        L.append("Both experiments replay a cached detection stream, "
+                 "perturbing what the system BELIEVES (assumed extrinsics, "
+                 "assumed ego pose) while ground truth stays fixed.\n")
+        L.append("\n**Pitch sensitivity.** mini has no hill scenes, but a "
+                 "pitch error is exactly what a crest, dip, banked curve or "
+                 "brake-dive produces. Median range error:\n\n")
+        L.append("| assumed-pitch error | IPM only | fused (current) |\n"
+                 "|---|---|---|\n")
+        ipm_rows = {r["pitch"]: r for r in pitch["variants"]["IPM only"]["rows"]}
+        fus_rows = {r["pitch"]: r
+                    for r in pitch["variants"]["fused (M9 default)"]["rows"]}
+        for p in (0.0, 1.0, 2.0, 3.0, -2.0, -3.0):
+            if p in ipm_rows:
+                L.append(f"| {p:+.0f}° | {pct(ipm_rows[p]['overall'])} | "
+                         f"{pct(fus_rows[p]['overall'])} |\n")
+        L.append(f"\nIPM degrades "
+                 f"{pitch['variants']['IPM only']['degradation_factor']:.1f}x at "
+                 f"+/-2°; the fused lift degrades "
+                 f"{pitch['variants']['fused (M9 default)']['degradation_factor']:.1f}x. "
+                 "The plan's 'every IPM system lies on hills' is now measured "
+                 "rather than asserted — and M9 hardened the system against it "
+                 "as an unplanned side effect, because the width prior takes "
+                 "range from apparent size and intrinsics, not from an assumed "
+                 "ground plane.\n")
+        L.append("\n**Localisation dependence.** The BEV filters run in the "
+                 "global frame using nuScenes `ego_pose` — GT localisation a "
+                 "camera-only system would not have. Degrading it:\n\n")
+        L.append("| assumed pose quality | range err | velocity err |\n"
+                 "|---|---|---|\n")
+        for v in loc["variants"]:
+            L.append(f"| {v['label']} | {pct(v['range_err'])} | "
+                     f"{v['vel_err']:.2f} m/s |\n")
+        base_v = loc["variants"][0]["vel_err"]
+        mid = next(v for v in loc["variants"] if v["yaw_sigma_deg"] == 0.5)
+        L.append(f"\nThe dependence is mild: consumer-grade quality "
+                 f"(0.3m / 0.5°) costs {mid['vel_err'] / base_v - 1:.0%} of "
+                 "velocity accuracy, so the headline numbers are not an "
+                 "artefact of nuScenes' SLAM. Range is nearly untouched by pose "
+                 "noise because it is measured in the ego frame before any "
+                 "global transform. Tracking without localisation at all keeps "
+                 f"range at {pct(loc['no_localization']['range_err'])} but makes "
+                 "absolute velocity unrecoverable by construction — only "
+                 "ego-relative motion survives, which is why M3 chose the "
+                 "global frame and why TTC (the best braking predictor) needs "
+                 "it.\n")
+
+    L.append("\n## 9. Known limitations (measured, not hypothetical)\n")
     L.append("- **Night**: lane corridor mostly unavailable; detection/tracking "
              "recall drops (tables 2-3). Risk falls back to fixed corridor, "
              "flagged per record.\n")
@@ -292,8 +345,9 @@ def main():
              "(gt/depth 0.63->1.06).\n")
     L.append("- **Cyclist detection** is weak (AP 0.13): COCO bicycle-vs-rider "
              "box mismatch; needs fine-tuning on full trainval.\n")
-    L.append("- **Flat-ground assumption untested on hills** — no slope scenes "
-             "in mini.\n")
+    L.append("- **Flat-ground assumption**: no slope scenes in mini, but the "
+             "failure mode is now bounded by the pitch sweep above — the "
+             "current lift degrades only 1.1x at +/-2° (IPM alone: 4.9x).\n")
 
     L.append("- **Risk aggregation is mis-weighted** (M8): the composite score "
              "under-performs its own inverse-TTC component; re-weighting so "

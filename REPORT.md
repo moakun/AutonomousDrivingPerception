@@ -114,12 +114,41 @@ The risk layer has no ground truth — nuScenes labels objects, not danger. Prox
 
 **Caveats.** Hard braking is a behavioural proxy, not ground-truth danger: drivers also brake for lights, stop signs and turns. 10 scenes is a small sample — see bootstrap CIs. Labels are acausal (offline smoothing over the whole scene); the perception path never sees them. Sensitivity across 3 thresholds x 3 horizons is in `out/eval/risk_validation.json`; the ordering above holds throughout the hard-braking regime and reverses in the gentle regime.
 
-## 8. Known limitations (measured, not hypothetical)
+## 8. Robustness (M10)
+Both experiments replay a cached detection stream, perturbing what the system BELIEVES (assumed extrinsics, assumed ego pose) while ground truth stays fixed.
+
+**Pitch sensitivity.** mini has no hill scenes, but a pitch error is exactly what a crest, dip, banked curve or brake-dive produces. Median range error:
+
+| assumed-pitch error | IPM only | fused (current) |
+|---|---|---|
+| +0° | 17.4% | 7.7% |
+| +1° | 44.6% | 7.8% |
+| +2° | 85.6% | 7.9% |
+| +3° | 162.3% | 7.9% |
+| -2° | 33.3% | 8.9% |
+| -3° | 42.8% | 10.0% |
+
+IPM degrades 4.9x at +/-2°; the fused lift degrades 1.1x. The plan's 'every IPM system lies on hills' is now measured rather than asserted — and M9 hardened the system against it as an unplanned side effect, because the width prior takes range from apparent size and intrinsics, not from an assumed ground plane.
+
+**Localisation dependence.** The BEV filters run in the global frame using nuScenes `ego_pose` — GT localisation a camera-only system would not have. Degrading it:
+
+| assumed pose quality | range err | velocity err |
+|---|---|---|
+| GT pose (current) | 7.7% | 1.28 m/s |
+| pos 0.1m, yaw 0.2deg | 7.7% | 1.29 m/s |
+| pos 0.3m, yaw 0.5deg | 7.8% | 1.33 m/s |
+| pos 1.0m, yaw 1.0deg | 8.4% | 1.57 m/s |
+| pos 0.0m, yaw 2.0deg | 7.7% | 1.46 m/s |
+| pos 3.0m, yaw 0.0deg | 10.5% | 2.22 m/s |
+
+The dependence is mild: consumer-grade quality (0.3m / 0.5°) costs 4% of velocity accuracy, so the headline numbers are not an artefact of nuScenes' SLAM. Range is nearly untouched by pose noise because it is measured in the ego frame before any global transform. Tracking without localisation at all keeps range at 7.7% but makes absolute velocity unrecoverable by construction — only ego-relative motion survives, which is why M3 chose the global frame and why TTC (the best braking predictor) needs it.
+
+## 9. Known limitations (measured, not hypothetical)
 - **Night**: lane corridor mostly unavailable; detection/tracking recall drops (tables 2-3). Risk falls back to fixed corridor, flagged per record.
 - **IPM occluded-bottom drift** (largely FIXED in M9): barrier-occluded boxes biased range high with phantom velocity. Depth did not fix it (M6); the width prior did — occluded-object error 13.2% -> 5.5%. IPM is still used below 12m, where the effect is small.
 - **Depth near-field bias**: DA-V2-metric overestimates <10m (58% median) with a nonlinear, non-calibratable profile (gt/depth 0.63->1.06).
 - **Cyclist detection** is weak (AP 0.13): COCO bicycle-vs-rider box mismatch; needs fine-tuning on full trainval.
-- **Flat-ground assumption untested on hills** — no slope scenes in mini.
+- **Flat-ground assumption**: no slope scenes in mini, but the failure mode is now bounded by the pitch sweep above — the current lift degrades only 1.1x at +/-2° (IPM alone: 4.9x).
 - **Risk aggregation is mis-weighted** (M8): the composite score under-performs its own inverse-TTC component; re-weighting so dynamics dominate static lane membership is the open follow-up.
 
 ## 9. Artifacts

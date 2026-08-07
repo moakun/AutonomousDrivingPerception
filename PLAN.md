@@ -237,7 +237,7 @@ and issue text.
 |---|-----------|--------------|--------|
 | M8 | Risk-layer quantitative validation | #1 | ✅ done — mixed result, see below |
 | M9 | Width-prior range fusion | #2 | ✅ done — adopted as default lift |
-| M10 | Robustness experiments | #3, #4 | planned |
+| M10 | Robustness experiments | #3, #4 | ✅ done — both answered |
 | M11 | Engineering hardening | #5–#9 | planned |
 
 ## M8 — Risk-layer quantitative validation (#1)
@@ -370,6 +370,54 @@ cheap visual-odometry / constant-turn-rate estimate and report the delta.
 
 **Exit criteria:** both curves in REPORT.md; #4's result reframes the headline accuracy numbers
 honestly (either "barely matters" or a stated dependency).
+
+### M10 results
+
+Both experiments replay a cached detection stream (`scripts/build_replay_cache.py`, 3 MB), so
+every variant is CPU-only — perturbations touch what the system BELIEVES (assumed extrinsics,
+assumed pose) while ground truth stays fixed.
+
+**#3 Pitch sensitivity — median range error vs assumed-pitch error:**
+
+| pitch error | IPM only | fused (M9 default) |
+|---|---|---|
+| 0° | 17.4% | 7.7% |
+| ±1° | 19.4 / 44.6% | 8.1 / 7.8% |
+| ±2° | 33.3 / 85.6% | 8.9 / 7.9% |
+| ±3° | 42.8 / 162.3% | 10.0 / 7.9% |
+
+**IPM degrades 4.9× at ±2°; the fused lift degrades 1.1×.** At +2° in the 30–50m bin IPM reaches
+387% error while the fused lift holds 8.6%. So the plan's "every IPM system lies on hills" is now
+quantified without hill data — a 2° pitch is an ordinary crest, banked curve or brake-dive — and
+M9 turns out to have hardened the system against it as an unplanned side effect: the width prior
+takes range from apparent size and intrinsics and does not care where the ground plane is assumed
+to be, while the 12m switch confines IPM to ranges where pitch error is geometrically small. The
+asymmetry (nose-up far worse) is expected: tilting the assumed plane up pushes ray-ground
+intersections toward the horizon, where range diverges.
+
+**#4 Localization dependence — velocity error vs assumed-pose quality:**
+
+| localisation | range err | velocity err | vs baseline |
+|---|---|---|---|
+| GT pose (current) | 7.7% | 1.28 m/s | — |
+| pos 0.1m, yaw 0.2° | 7.7% | 1.29 m/s | 1.01× |
+| pos 0.3m, yaw 0.5° | 7.8% | 1.33 m/s | 1.04× |
+| pos 1.0m, yaw 1.0° | 8.4% | 1.57 m/s | 1.22× |
+| yaw 2.0° only | 7.7% | 1.46 m/s | 1.13× |
+| pos 3.0m only | 10.5% | 2.22 m/s | 1.73× |
+
+**The dependence on dataset localisation is mild.** Consumer-grade quality (0.3m / 0.5°) costs 4%
+of velocity accuracy; even 1m/1° costs 22%. The headline numbers are therefore not an artefact of
+nuScenes' SLAM. Two subsidiary findings: position error hurts more than yaw at these magnitudes
+(3m position → 1.73× vs 2° yaw → 1.13×), contrary to the expectation that yaw would dominate —
+because the range-amplified yaw term is partly absorbed by the Kalman filters, while position
+error injects directly into every global-frame measurement; and range error is nearly untouched by
+pose noise, since range is measured in the ego frame before any global transform.
+
+**Note on the no-localisation variant:** ego-frame tracking leaves range unchanged (7.7%) but makes
+absolute velocity unrecoverable by construction — only ego-relative motion survives, which is
+exactly why M3 chose the global frame. Absolute velocity is what separates a parked car from one
+matching your speed, and TTC (M8's best predictor) depends on it.
 
 ## M11 — Engineering hardening (#5–#9)
 
