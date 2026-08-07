@@ -238,7 +238,8 @@ and issue text.
 | M8 | Risk-layer quantitative validation | #1 | ✅ done — mixed result, see below |
 | M9 | Width-prior range fusion | #2 | ✅ done — adopted as default lift |
 | M10 | Robustness experiments | #3, #4 | ✅ done — both answered |
-| M11 | Engineering hardening | #5–#9 | planned |
+| M11 | Engineering hardening | #5–#9 | ✅ done (#7 landed early during M9) |
+| M12 | Arbitrary-footage support | — | ✅ done — runs on any video with estimated calibration |
 
 ## M8 — Risk-layer quantitative validation (#1)
 
@@ -439,6 +440,65 @@ matching your speed, and TTC (M8's best predictor) depends on it.
 
 **Exit criteria:** #5–#7 landed with tests; #8 fixed with a regression test; #9 verified on the
 demo videos (no visible flicker).
+
+### M11 result — all five landed, 154 tests passing
+
+- **#5** `adp/config.py` + `configs/default.yaml` (the directory this plan specified and never
+  built). A test asserts the YAML reproduces committed behaviour exactly, so "loading defaults"
+  can never silently change results; `CONFIG.fingerprint()` feeds provenance.
+- **#6** `adp/eval/provenance.py` stamps git SHA, dirty flag, UTC timestamp, host, Python version
+  and config fingerprint into results files.
+- **#8** fixed: skip frames now charge wall time. The old behaviour is pinned by a test that
+  documents it (`test_zero_dt_would_never_expire` — 100 skip frames, corridor "valid" forever).
+- **#9** hysteresis: enter 0.60 / exit 0.50 with 2-frame confirmation, but **escalation to `high`
+  is immediate** — delaying a collision warning for visual tidiness is the wrong trade.
+
+## M12 — Arbitrary-footage support (added: "run on actual footage")
+
+No dashcam video existed on this machine, so the footage path was validated the only rigorous way
+available: encode a nuScenes scene to a plain MP4 (`scripts/make_footage_clip.py`), run
+`scripts/run_footage.py` on nothing but pixels — no intrinsics, no extrinsics, no ego pose — and
+score the result against the withheld 3D GT.
+
+New: `adp/calib/estimate.py` (focal length from assumed HFOV; camera pitch from the vanishing
+point of lane lines via SVD), `scripts/run_footage.py`, and a `localization=False` pipeline mode
+where RSS and absolute speeds are **suppressed rather than fabricated** (TTC and closing speed
+survive — both are relative).
+
+**Cost of running uncalibrated** (scene-0103, median range error):
+
+| variant | overall | 0–10m | 10–30m | 30–50m | 50m+ |
+|---|---|---|---|---|---|
+| A true calibration + localisation | 8.8% | 11.3% | 7.7% | 8.9% | 13.2% |
+| B true calibration, no localisation | 8.6% | 11.1% | 7.6% | 7.8% | 15.0% |
+| C **estimated calibration, no localisation** | **9.5%** | 23.3% | 10.6% | 7.3% | 12.8% |
+| D estimated calibration + true height | 9.4% | 11.8% | 10.4% | 7.3% | 12.8% |
+
+Decomposition: losing localisation −0.2pp (nothing, as M10 predicted), estimating calibration
++0.9pp, total **8.8% → 9.5%**.
+
+**The height assumption costs nothing beyond 12m and everything below it.** C vs D isolates it:
+the 0–10m bin degrades 11.8% → 23.3% from a 13% height error, while every bin above 12m is
+identical to the decimal. That is the M9 architecture showing through — the width prior takes
+range from apparent size and f_x, so only the sub-12m IPM band cares about camera height.
+Practical consequence: measuring camera height with a tape measure fixes the near field, and the
+far field never needed it.
+
+**Field-of-view sensitivity — the honest caveat.** The focal estimate here was off by only +0.2%,
+which was luck: nuScenes CAM_FRONT is ~64° HFOV, almost exactly the assumed dashcam value. Since
+width-based range scales as 1/f_x, FOV error maps into range error roughly 1:1:
+
+| assumed HFOV | f_x error | range error |
+|---|---|---|
+| 55° | +22.7% | 15.8% |
+| 60° | +10.6% | 11.1% |
+| **65° (assumed)** | +0.2% | **9.5%** |
+| 70° | −8.8% | 13.4% |
+| 75° | −16.8% | 19.5% |
+
+So across the real dashcam band (55–75°) a blind guess costs 9.5–19.5% — usable, but the single
+highest-value thing a user can supply is the true focal length (`--fx`), which collapses the
+dominant error term.
 
 ## Larger, later (not part of the nine)
 

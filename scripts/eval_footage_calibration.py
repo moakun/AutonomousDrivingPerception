@@ -121,6 +121,27 @@ def main():
     print(f"  TOTAL vs calibrated : {100 * (c - a):+.1f} pp "
           f"({a:.1%} -> {c:.1%})")
 
+    # The focal estimate above was lucky: nuScenes CAM_FRONT is ~64 deg HFOV,
+    # almost exactly the dashcam assumption. Width-based range scales as
+    # 1/f_x, so a wrong FOV maps ~1:1 into range error. Quantify it rather
+    # than hoping every camera is this close.
+    print("\nsensitivity to the assumed field of view (real dashcams: 55-75 deg):")
+    print(f"{'assumed HFOV':>14} | {'f_x':>8} | {'f_x err':>8} | "
+          f"{'range err':>9}")
+    sweep = []
+    for hfov in (50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 85.0):
+        K = intrinsics_from_hfov(W, H, hfov)
+        res = replay_scene(scene, width, use_localization=False, K_override=K,
+                           T_ego_cam_override=footage_extrinsics(
+                               DASHCAM_HEIGHT_M, EST_PITCH_DEG))
+        row = {"hfov_deg": hfov, "f_x": float(K[0, 0]),
+               "f_x_rel_err": float(K[0, 0] / K_true[0, 0] - 1),
+               "range_err": res.median_range_err()}
+        sweep.append(row)
+        print(f"{hfov:13.0f}° | {row['f_x']:8.1f} | {row['f_x_rel_err']:+7.1%} | "
+              f"{row['range_err']:8.1%}")
+    report["hfov_sensitivity"] = sweep
+
     with open(OUT, "w") as f:
         json.dump(stamp(report), f, indent=2)
     print(f"\nsaved: {os.path.abspath(OUT)}")
