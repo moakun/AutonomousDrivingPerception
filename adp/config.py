@@ -83,10 +83,17 @@ class RiskConfig:
     a_accel: float = 3.5
     b_min: float = 4.0
     b_max: float = 8.0
-    # scoring
+    # scoring (M8b: zone MULTIPLIES a continuous dynamic hazard rather than
+    # adding a constant that swamped it — see adp/risk/scoring.py)
+    zone_factor: dict = field(default_factory=lambda: {
+        "ego": 1.0, "adjacent": 0.45, "off_path": 0.12, "behind": 0.0})
+    presence_floor: float = 0.15   # "something is there and I can't rule it out"
+    ttc_critical_s: float = 5.0
+    ttc_conf_floor: float = 0.2    # a wide CI discounts, never fully mutes
+    intent_horizon_s: float = 3.0
+    # legacy additive weights (M5 scoring, kept for the A/B comparison)
     zone_base: dict = field(default_factory=lambda: {
         "ego": 0.30, "adjacent": 0.10, "off_path": 0.0, "behind": 0.0})
-    ttc_critical_s: float = 5.0
     rss_weight: float = 0.25
     intent_weight: float = 0.20
     ttc_weight: float = 0.45

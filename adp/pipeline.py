@@ -24,7 +24,7 @@ from adp.lift.ipm import GroundPlaneLift
 from adp.risk.assign import assign_lane, crossing_intent
 from adp.risk.rss import rss_min_gap
 from adp.risk.scoring import BucketHysteresis, RiskRecord, ego_risk, score_object
-from adp.risk.ttc import compute_ttc
+from adp.risk.ttc import EGO_FRONT_M, compute_ttc
 from adp.track.bytetrack import ByteTracker, Track
 from adp.track.kalman import ConstantVelocityKalman
 
@@ -200,6 +200,8 @@ class PerceptionPipeline:
                 rss_min_gap_m=rss_gap,
                 rss_violated=rss_violated,
                 intent_cross_s=intent,
+                gap_m=(ttc.gap_m if ttc is not None
+                       else float(pos_e[0]) - EGO_FRONT_M),
                 # Without localisation this is speed RELATIVE to ego, so the
                 # plausibility gate must not judge it as an absolute speed.
                 object_speed_ms=(float(np.linalg.norm(state.kf.velocity))
