@@ -128,19 +128,85 @@ def make_record(**kw):
     return score_object(RiskRecord(**defaults))
 
 
+class TestHazardComponents:
+    """M8b: each component must be continuous and monotone."""
+
+    def test_ttc_hazard_ramps(self):
+        from adp.risk.scoring import ttc_hazard
+        from adp.risk.ttc import TtcResult
+        vals = [ttc_hazard(TtcResult(t, 0.1, 20.0, 8.0, True))
+                for t in (4.5, 3.0, 1.5, 0.5)]
+        assert vals == sorted(vals)          # nearer = more hazardous
+        assert ttc_hazard(TtcResult(6.0, 0.1, 20.0, 8.0, True)) == 0.0
+        assert ttc_hazard(None) == 0.0
+
+    def test_wide_ci_discounts_but_never_mutes(self):
+        from adp.risk.scoring import ttc_hazard
+        from adp.risk.ttc import TtcResult
+        tight = ttc_hazard(TtcResult(2.0, 0.1, 20.0, 8.0, True))
+        wide = ttc_hazard(TtcResult(2.0, 5.0, 20.0, 8.0, True))
+        assert 0.0 < wide < tight
+
+    def test_rss_hazard_is_continuous(self):
+        from adp.risk.scoring import rss_hazard
+        assert rss_hazard(25.0, 20.0) == 0.0      # beyond the safe distance
+        assert rss_hazard(10.0, 20.0) == pytest.approx(0.5)
+        assert rss_hazard(0.0, 20.0) == 1.0
+        assert rss_hazard(None, 20.0) == 0.0
+
+    def test_noisy_or_properties(self):
+        from adp.risk.scoring import noisy_or
+        assert noisy_or(0.0, 0.0) == 0.0
+        assert noisy_or(1.0, 0.0) == 1.0
+        assert noisy_or(0.5, 0.5) == pytest.approx(0.75)
+        # monotone: adding a component can never reduce the total
+        assert noisy_or(0.3, 0.4) >= noisy_or(0.3)
+
+
 class TestScoring:
     def test_sanity_ranking(self):
         """Plan sanity scene: braking lead car >> adjacent parked car >> empty."""
         from adp.risk.ttc import TtcResult
         braking_lead = make_record(
             ttc=TtcResult(1.8, 0.4, 16.5, 12.0, True), rss_violated=True,
-            rss_min_gap_m=25.0)
+            gap_m=16.5, rss_min_gap_m=25.0)
         parked_adjacent = make_record(zone=LaneZone.ADJACENT)
         offpath = make_record(zone=LaneZone.OFF_PATH)
         assert braking_lead.score > parked_adjacent.score > offpath.score
         assert braking_lead.bucket == "high"
         assert offpath.bucket == "low"
         assert ego_risk([braking_lead, parked_adjacent, offpath]) == braking_lead.score
+
+    def test_dynamics_dominate_static_presence(self):
+        """M8b's whole point: a closing car must clearly outrank a parked one
+        in the same lane. Under the old additive score both sat near 0.30."""
+        from adp.risk.ttc import TtcResult
+        closing = make_record(ttc=TtcResult(2.0, 0.2, 20.0, 10.0, True))
+        parked = make_record()          # same lane, no dynamics at all
+        assert closing.score > 3 * parked.score
+
+    def test_stationary_in_lane_keeps_presence_floor(self):
+        """Absence of evidence must not read as evidence of absence."""
+        from adp.risk.scoring import PRESENCE_FLOOR
+        r = make_record()
+        assert r.score == pytest.approx(PRESENCE_FLOOR)   # ego zone factor 1.0
+        assert r.hazard == PRESENCE_FLOOR
+
+    def test_zone_scales_the_same_hazard(self):
+        from adp.risk.ttc import TtcResult
+        ttc = TtcResult(2.0, 0.2, 20.0, 10.0, True)
+        ego = make_record(zone=LaneZone.EGO, ttc=ttc)
+        adj = make_record(zone=LaneZone.ADJACENT, ttc=ttc)
+        assert ego.hazard == pytest.approx(adj.hazard)   # same dynamics
+        assert ego.score > adj.score                     # different relevance
+
+    def test_score_is_not_quantised(self):
+        """The old score piled 33% of frames onto exactly 0.30. Above the
+        presence floor every distinct TTC must now give a distinct score."""
+        from adp.risk.ttc import TtcResult
+        scores = {make_record(ttc=TtcResult(t, 0.2, 20.0, 8.0, True)).score
+                  for t in np.linspace(0.5, 3.0, 25)}
+        assert len(scores) == 25
 
     def test_untrustworthy_ttc_does_not_score(self):
         from adp.risk.ttc import TtcResult
@@ -163,18 +229,20 @@ class TestScoring:
         assert ego_risk([]) == 0.0
 
     def test_implausible_pedestrian_velocity_suppressed(self):
+        from adp.risk.scoring import PRESENCE_FLOOR
         from adp.risk.ttc import TtcResult
         # A "35.8 m/s pedestrian" is filter corruption, not a sprinting human:
-        # zone base survives, TTC/RSS contributions must not.
+        # presence survives, the corrupted dynamics must not.
         ghost = make_record(
-            category="pedestrian", object_speed_ms=35.8,
+            category="pedestrian", object_speed_ms=35.8, gap_m=3.0,
             ttc=TtcResult(0.1, 0.02, 3.0, 35.8, True),
             rss_violated=True, rss_min_gap_m=4.1)
-        assert ghost.score == pytest.approx(0.30)  # zone base only
+        assert ghost.score == pytest.approx(PRESENCE_FLOOR)
         assert any("implausible" in r for r in ghost.reasons)
         # The same numbers on a car are plausible and score fully.
         car = make_record(
-            category="car", object_speed_ms=35.8,
+            category="car", object_speed_ms=35.8, gap_m=3.0,
             ttc=TtcResult(0.1, 0.02, 3.0, 35.8, True),
             rss_violated=True, rss_min_gap_m=4.1)
-        assert car.score > 0.9
+        assert car.score > 0.8
+        assert car.score > 5 * ghost.score

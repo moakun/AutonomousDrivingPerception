@@ -180,7 +180,8 @@ class PerceptionPipeline:
                 v_front_along = float((R_eg @ state.kf.velocity)[0])
                 rss_gap = rss_min_gap(float(np.linalg.norm(v_ego_g)),
                                       v_front_along)
-                gap = ttc.gap_m if ttc is not None else float(pos_e[0]) - 3.5
+                gap = (ttc.gap_m if ttc is not None
+                       else float(pos_e[0]) - EGO_FRONT_M)
                 rss_violated = (assignment.zone.value == "ego" and gap > 0
                                 and gap < rss_gap)
 
