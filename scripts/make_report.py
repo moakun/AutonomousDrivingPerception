@@ -202,13 +202,19 @@ def main():
              f"(ego {z.get('ego', 0)}, adjacent {z.get('adjacent', 0)}, "
              f"off-path {z.get('off_path', 0)})\n")
     L.append(f"- TTC: {risk['ttc']['computed']} computed, "
-             f"{risk['ttc']['trustworthy']} trustworthy (30m gate from M3 error "
-             "curve; CI from KF covariances via delta method)\n")
+             f"{risk['ttc']['trustworthy']} trustworthy (50m gate, re-derived "
+             "from the M9 lift error curve; CI from KF covariances via the "
+             "delta method)\n")
     L.append(f"- RSS (arXiv:1708.06374) violations: {risk['rss_violations']}; "
              f"pedestrian crossing-intent events: {risk['crossing_intent_events']}\n")
     L.append(f"- Corridor source: {risk['corridor_source']}\n")
     L.append(f"- Ego risk: mean {risk['ego_risk']['mean']:.2f}, high on "
              f"{risk['ego_risk']['frames_high']}/{risk['ego_risk']['n_keyframes']} keyframes\n")
+    L.append("  (M8b lowered these from mean 0.29 / 13 high frames: the old "
+             "score charged every in-lane object 0.30 merely for existing, so "
+             "warnings are now rarer and correspond to genuinely short TTC. "
+             "Bucket thresholds were left at 0.30/0.60 — display calibration "
+             "was deliberately NOT tuned against the braking labels.)\n")
     L.append("\nTop audited moments (all reasons machine-generated):\n")
     for m in risk["top_moments"][:5]:
         L.append(f"- [{m['score']:.2f}] {m['scene']} #{m['track']} "
@@ -261,13 +267,21 @@ def main():
                  "information — stayed bit-identical at 0.548. That is the "
                  "causal link between metric grounding and risk quality, measured "
                  "rather than asserted.\n")
-        L.append(f"3. *The composite score is still worse than its own best "
-                 f"component* ({ours_auc:.3f} vs {ttc_auc:.3f}). The flat +0.30 "
-                 "ego-lane base dominates the TTC ramp and puts 33% of frames on "
-                 "one tied value; excluding tied frames does not help (AUC 0.479), "
-                 "so the aggregation is mis-weighted, not the inputs. Restructuring "
-                 "it (zone as a multiplier on dynamics, continuous RSS ratio) is "
-                 "the open follow-up, deliberately not fitted to 25 events.\n")
+        L.append(f"3. *The aggregation defect found here has been fixed (M8b).* "
+                 f"The original score ADDED a flat +0.30 for anything in the ego "
+                 f"lane, piling 33% of frames onto one tied value and scoring "
+                 f"0.655 — below its own TTC component. Zone now MULTIPLIES a "
+                 f"continuous hazard (noisy-OR of TTC, a continuous RSS gap "
+                 f"ratio, and crossing intent), which lifted the composite to "
+                 f"{ours_auc:.3f} (AP "
+                 f"{hard[0]['predictors']['risk score (ours)']['ap_lift_over_base_rate']:.1f}x "
+                 f"base rate) — statistically indistinguishable from inverse TTC "
+                 f"({ttc_auc:.3f}), with overlapping CIs. No constant was fitted "
+                 "to these labels; only the structure changed. The composite now "
+                 "matches TTC rather than beating it, so the lane/RSS/intent terms "
+                 "add no measurable prediction on 25 events — but they no longer "
+                 "subtract, and they carry the explanatory content a bare TTC "
+                 "number cannot.\n")
         L.append("4. *At gentle braking thresholds (-1.5 m/s^2) nothing predicts "
                  "well and box area leads.* Expected: gentle urban deceleration is "
                  "driven by traffic density, queues and traffic lights — none of "
@@ -349,9 +363,10 @@ def main():
              "failure mode is now bounded by the pitch sweep above — the "
              "current lift degrades only 1.1x at +/-2° (IPM alone: 4.9x).\n")
 
-    L.append("- **Risk aggregation is mis-weighted** (M8): the composite score "
-             "under-performs its own inverse-TTC component; re-weighting so "
-             "dynamics dominate static lane membership is the open follow-up.\n")
+    L.append("- **Risk composite adds no measurable prediction over TTC alone** "
+             "(M8b): after restructuring it matches inverse TTC (0.732 vs "
+             "0.737) rather than beating it. Whether lane/RSS/intent add real "
+             "signal is unresolvable on 25 braking events; needs trainval.\n")
 
     L.append("\n## 9. Artifacts\n")
     L.append("- Demo videos: `out/demo/scene-0103_demo.mp4` (day), "

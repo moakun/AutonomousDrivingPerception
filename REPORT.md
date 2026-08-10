@@ -12,7 +12,7 @@ frame -> yolo11m@960 (2D det) -> ByteTrack (12Hz) -> IPM lift -> BEV Kalman (glo
 | tracking + IPM lift + BEV KF | ~1 | |
 | lanes (YOLOP + BEV fit) | ~27 | can run at half rate |
 | depth (optional hybrid, off by default) | ~39 | DA-V2-metric fp16 |
-| **end-to-end** | **61** (p95 117) | staleness at 30 m/s: ~1.8m (p95 3.5m) |
+| **end-to-end** | **55** (p95 104) | staleness at 30 m/s: ~1.6m (p95 3.1m) |
 
 ## 2. Detection (AP@0.5 vs projected 3D GT)
 Model selection table: `out/eval/detection_baseline.json` (yolo11m@960 selected: mAP 0.419 @ ~18ms).
@@ -80,18 +80,19 @@ Velocity is validated against nuScenes annotation velocities (table above). The 
 Zero-validity scenes are parking lots / intersection idling / dark night — 'no corridor' is the correct output there; the risk layer falls back to a fixed ±1.85m corridor and records the fallback per object.
 
 ## 6. Risk layer
-- Records at keyframes: 2092 (ego 319, adjacent 601, off-path 1171)
-- TTC: 1446 computed, 531 trustworthy (30m gate from M3 error curve; CI from KF covariances via delta method)
-- RSS (arXiv:1708.06374) violations: 29; pedestrian crossing-intent events: 69
-- Corridor source: {'detected': 735, 'fallback': 1357}
-- Ego risk: mean 0.29, high on 13/404 keyframes
+- Records at keyframes: 2161 (ego 326, adjacent 601, off-path 1234)
+- TTC: 1658 computed, 781 trustworthy (50m gate, re-derived from the M9 lift error curve; CI from KF covariances via the delta method)
+- RSS (arXiv:1708.06374) violations: 24; pedestrian crossing-intent events: 61
+- Corridor source: {'detected': 658, 'fallback': 1503}
+- Ego risk: mean 0.18, high on 3/404 keyframes
+  (M8b lowered these from mean 0.29 / 13 high frames: the old score charged every in-lane object 0.30 merely for existing, so warnings are now rarer and correspond to genuinely short TTC. Bucket thresholds were left at 0.30/0.60 — display calibration was deliberately NOT tuned against the braking labels.)
 
 Top audited moments (all reasons machine-generated):
-- [0.71] scene-1100 #8 car: ego lane (fallback corridor); TTC 0.5±0.1s, closing 9.8 m/s
-- [0.70] scene-1100 #20 car: ego lane (fallback corridor); TTC 0.5±0.1s, closing 9.5 m/s
-- [0.70] scene-1100 #2 car: ego lane (fallback corridor); TTC 0.5±0.1s, closing 8.6 m/s
-- [0.69] scene-0916 #121 car: ego lane (fallback corridor); TTC 0.7±0.1s, closing 9.8 m/s
-- [0.66] scene-1100 #2 car: ego lane (fallback corridor); TTC 1.0±0.1s, closing 9.0 m/s
+- [0.78] scene-1100 #8 car: ego lane (fallback corridor); TTC 0.4±0.1s, closing 10.6 m/s
+- [0.76] scene-1100 #20 car: ego lane (fallback corridor); TTC 0.5±0.1s, closing 9.6 m/s
+- [0.72] scene-1100 #2 car: ego lane (fallback corridor); TTC 0.6±0.1s, closing 8.0 m/s
+- [0.60] scene-1100 #9 car: ego lane (fallback corridor); TTC 1.2±0.3s, closing 9.7 m/s
+- [0.58] scene-1100 #2 car: ego lane (fallback corridor); TTC 0.7±0.2s, closing 11.1 m/s
 
 ## 7. Does the risk output predict human braking? (M8)
 The risk layer has no ground truth — nuScenes labels objects, not danger. Proxy signal: hard braking within a horizon, derived offline from ego pose (acausal; the perception path never sees it). Predictors are ranked by ROC-AUC with bootstrap CIs.
@@ -101,7 +102,7 @@ The risk layer has no ground truth — nuScenes labels objects, not danger. Prox
 | predictor | ROC-AUC | 95% CI | AP | vs base rate |
 |---|---|---|---|---|
 | inverse TTC only | 0.737 | [0.65, 0.82] | 0.281 | 2.42x |
-| risk score (ours) | 0.655 | [0.57, 0.74] | 0.162 | 1.39x |
+| risk score (ours) | 0.732 | [0.64, 0.82] | 0.245 | 2.11x |
 | ego speed only | 0.610 | [0.53, 0.68] | 0.139 | 1.20x |
 | box area (strawman) | 0.548 | [0.46, 0.63] | 0.121 | 1.04x |
 | nearest object range | 0.548 | [0.46, 0.63] | 0.122 | 1.05x |
@@ -109,7 +110,7 @@ The risk layer has no ground truth — nuScenes labels objects, not danger. Prox
 **Findings.**
 1. *Metric grounding is validated.* Inverse TTC — which exists only because of the metric lift and Kalman velocity — is the strongest predictor of hard braking (AUC 0.737, 2.4x base rate on AP) and the only predictor whose CI clears chance. It beats the box-area strawman the plan called worthless (0.548, CI includes 0.5).
 2. *Improving the lift improved exactly the predictors that depend on it.* Re-running this harness after M9's fused lift raised inverse-TTC AUC 0.709 -> 0.737 and its AP 1.91x -> 2.42x base rate, while the box-area strawman — which uses no metric information — stayed bit-identical at 0.548. That is the causal link between metric grounding and risk quality, measured rather than asserted.
-3. *The composite score is still worse than its own best component* (0.655 vs 0.737). The flat +0.30 ego-lane base dominates the TTC ramp and puts 33% of frames on one tied value; excluding tied frames does not help (AUC 0.479), so the aggregation is mis-weighted, not the inputs. Restructuring it (zone as a multiplier on dynamics, continuous RSS ratio) is the open follow-up, deliberately not fitted to 25 events.
+3. *The aggregation defect found here has been fixed (M8b).* The original score ADDED a flat +0.30 for anything in the ego lane, piling 33% of frames onto one tied value and scoring 0.655 — below its own TTC component. Zone now MULTIPLIES a continuous hazard (noisy-OR of TTC, a continuous RSS gap ratio, and crossing intent), which lifted the composite to 0.732 (AP 2.1x base rate) — statistically indistinguishable from inverse TTC (0.737), with overlapping CIs. No constant was fitted to these labels; only the structure changed. The composite now matches TTC rather than beating it, so the lane/RSS/intent terms add no measurable prediction on 25 events — but they no longer subtract, and they carry the explanatory content a bare TTC number cannot.
 4. *At gentle braking thresholds (-1.5 m/s^2) nothing predicts well and box area leads.* Expected: gentle urban deceleration is driven by traffic density, queues and traffic lights — none of which this system perceives. Box area is a decent traffic-density proxy; it is not a danger measure.
 
 **Caveats.** Hard braking is a behavioural proxy, not ground-truth danger: drivers also brake for lights, stop signs and turns. 10 scenes is a small sample — see bootstrap CIs. Labels are acausal (offline smoothing over the whole scene); the perception path never sees them. Sensitivity across 3 thresholds x 3 horizons is in `out/eval/risk_validation.json`; the ordering above holds throughout the hard-braking regime and reverses in the gentle regime.
@@ -149,7 +150,7 @@ The dependence is mild: consumer-grade quality (0.3m / 0.5°) costs 4% of veloci
 - **Depth near-field bias**: DA-V2-metric overestimates <10m (58% median) with a nonlinear, non-calibratable profile (gt/depth 0.63->1.06).
 - **Cyclist detection** is weak (AP 0.13): COCO bicycle-vs-rider box mismatch; needs fine-tuning on full trainval.
 - **Flat-ground assumption**: no slope scenes in mini, but the failure mode is now bounded by the pitch sweep above — the current lift degrades only 1.1x at +/-2° (IPM alone: 4.9x).
-- **Risk aggregation is mis-weighted** (M8): the composite score under-performs its own inverse-TTC component; re-weighting so dynamics dominate static lane membership is the open follow-up.
+- **Risk composite adds no measurable prediction over TTC alone** (M8b): after restructuring it matches inverse TTC (0.732 vs 0.737) rather than beating it. Whether lane/RSS/intent add real signal is unresolvable on 25 braking events; needs trainval.
 
 ## 9. Artifacts
 - Demo videos: `out/demo/scene-0103_demo.mp4` (day), `out/demo/scene-1100_demo.mp4` (night); per-milestone demos alongside.

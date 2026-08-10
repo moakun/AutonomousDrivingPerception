@@ -296,12 +296,42 @@ reported honestly. Caveats documented (drivers brake for lights/turns, not only 
    worth stating: gentle urban deceleration is traffic-density and traffic-light driven, and this
    system perceives neither. Box area proxies traffic density; it is not a danger measure.
 
-**Follow-up (M8b, open):** restructure scoring so dynamics dominate static lane membership — zone
-as a *multiplier* on dynamic terms rather than an additive base, and continuous RSS-gap ratio
-instead of a binary violation flag. Deliberately NOT fitting the existing constants to this
-sample: 25 positive events across 10 scenes would overfit, and the sensitivity sweep shows the
-label's own character changes with threshold. The structural change should be validated on full
-trainval, where the event count supports it.
+**Follow-up (M8b): ✅ done — the aggregation defect is fixed.**
+
+New structure in `adp/risk/scoring.py`:
+
+    score  = zone_factor * hazard
+    hazard = max(noisy_or(ttc_hazard, rss_hazard, intent_hazard), presence_floor)
+
+Zone now *multiplies* a continuous hazard instead of adding a constant to it. Every component is
+continuous: the RSS term became `1 - gap/rss_min_gap` (was binary 0 or 0.25), and the TTC term is
+discounted by the Kalman-derived confidence interval — a wide CI counts for less, never for
+nothing. Components combine with a noisy-OR (`1 - prod(1-h)`): monotone, smoothly saturating, and
+introducing **no new weights**, which matters because the plan forbade fitting to 25 events. A
+`presence_floor` keeps an in-lane object with unknown or implausible dynamics from scoring zero —
+absence of evidence must not read as evidence of absence, and it is also where the ghost-pedestrian
+case now lands.
+
+Nothing was fitted to the braking labels; only the structure changed, then it was re-measured on
+the same harness:
+
+| predictor | AUC before | AUC after | AP before | AP after |
+|---|---|---|---|---|
+| **risk score (composite)** | 0.655 | **0.732** | 1.39x base | **2.11x base** |
+| inverse TTC only | 0.737 | 0.737 | 2.42x base | 2.42x base |
+| box area (strawman) | 0.548 | 0.548 | 1.04x base | 1.04x base |
+
+The composite went from 0.082 AUC *below* its own best component to 0.005 below — statistically
+indistinguishable (CIs [0.64, 0.82] vs [0.65, 0.82]) — and improved at all nine
+threshold/horizon operating points. It even overtakes the strawman in the gentle-braking regime at
+the 5s horizon (0.591 vs 0.538), which it previously lost badly.
+
+**Honest reading:** the composite now *matches* inverse-TTC rather than beating it, so on this
+sample the lane/RSS/intent terms add no measurable predictive power — they no longer subtract any,
+and they carry explanatory content a bare TTC number cannot (which lane, how close to the RSS
+envelope, whether a pedestrian is stepping in). With 25 positive events, differences this small
+are unresolvable either way; distinguishing "adds nothing" from "adds a little" needs full
+trainval.
 
 ## M9 — Width-prior range fusion (#2)
 
