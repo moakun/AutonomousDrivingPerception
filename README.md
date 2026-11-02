@@ -7,14 +7,25 @@ detection is a solved API call — the value is *metric grounding*, turning
 boxes into meters, m/s, and defensible risk quantities, each validated against
 3D ground truth.
 
+![Live pipeline on nuScenes scene-0103: tracked detections with range and risk (left), bird's-eye view with lane corridor and track velocities (right)](docs/demo.gif)
+
 ```
 frame → yolo11m@960 (2D det) → ByteTrack (12Hz) → IPM lift → BEV Kalman (global frame)
      → YOLOP lanes → BEV corridor → risk: TTC±CI | lane zone | ped intent | RSS
 ```
 
-**End-to-end: 61ms p50 / 117ms p95** on an RTX 4060 Laptop (≈1.8m / 3.5m of
-staleness at 30 m/s). All numbers below: nuScenes v1.0-mini, 10 scenes,
-404 keyframes, CAM_FRONT. Full audit trail in [REPORT.md](REPORT.md).
+## Headline results
+
+| | |
+|---|---|
+| **End-to-end latency** | **55 ms p50** / 104 ms p95 on an RTX 4060 Laptop GPU (≈1.6 m of staleness at 30 m/s) |
+| **Range error, 10–30 m** | **6.9 % median** (target ≤ 15 %), IPM fused with a class-width prior; holds under leave-one-scene-out (8.2 % held-out) |
+| **Detector** | yolo11m @ 960 px, mAP@0.5 **0.419** at ~18 ms: more accurate than RT-DETR-L at half its latency |
+| **Far-range robustness** | chi-square innovation gate cut 50 m+ range error **61 % → 45 %** under occlusion |
+| **Tests** | 91 unit tests, all passing |
+
+All numbers: nuScenes v1.0-mini, 10 scenes, 404 keyframes, CAM_FRONT. Full
+audit trail in [REPORT.md](REPORT.md).
 
 ---
 
@@ -46,9 +57,14 @@ staleness at 30 m/s). All numbers below: nuScenes v1.0-mini, 10 scenes,
 - Box bottom-center → ground plane (ego z=0) → **BEV Kalman in the global
   frame** (ego-frame constant-velocity would make parked cars "accelerate"
   when ego turns). Measurement noise follows the analytic r²/(f·h) law.
-- **Target met: 11.9% median range error at 10–30m** (≤15% required); 4.2% at
-  0–10m. Velocity vs nuScenes annotation velocities: **0.28 m/s** median at
-  0–10m, 2.3 m/s at 10–30m.
+- Raw IPM met the target on its own (11.9% median range error at 10–30m,
+  ≤15% required), but degrades fast with range (39% beyond 50m).
+- **Class-width prior fusion (M9)** — IPM below 12m, an object-width cue
+  beyond — brought the Kalman-smoothed error to **6.9% at 10–30m** and
+  **9.8% beyond 50m**. It survives leave-one-scene-out validation (8.2%
+  held-out vs 7.5% in-sample). Two measured corrections made it work: IPM's
+  analytic noise model was 4–6× too optimistic, and fusion is dropped beyond
+  12m because inverse-variance fusion assumes unbiased inputs.
 - Occlusion teleports (a barrier-occluded car "jumping" from 45m to 95m) blew
   up far-range velocity until a **chi-square innovation gate** (reject >99.9%
   Mahalanobis outliers, re-seed after 6 persistent) cut 50m+ error 61%→45%.
@@ -82,7 +98,7 @@ staleness at 30 m/s). All numbers below: nuScenes v1.0-mini, 10 scenes,
   0.99): fixed with a **category velocity-plausibility gate** that suppresses
   TTC/RSS from impossible speeds and says so in the reasons.
 
-### Depth experiment (M6) — a designed decision, honestly resolved
+### Depth experiment (M6) — a designed decision, honestly resolved (superseded by M9)
 Head-to-head on 1,480 identical matched pairs, Depth Anything V2 metric
 (39ms fp16) vs raw IPM:
 
@@ -97,8 +113,9 @@ Head-to-head on 1,480 identical matched pairs, Depth Anything V2 metric
   (IPM still edges it on occluded objects <50m), and the near-field bias is
   **not calibratable** (gt/depth ratio 0.63→1.06 — nonlinear, not a scale).
 - **Verdict:** hybrid implemented (`PerceptionPipeline(use_depth=True)`), but
-  the live risk pipeline keeps IPM — TTC/RSS are gated to <30m, exactly where
-  IPM is both better and free.
+  the live risk pipeline does not use it. The class-width prior (M9) later
+  beat this hybrid beyond 10m at ~39ms/frame lower cost, so depth is kept only
+  to reproduce the comparison.
 
 ### Per-condition (M7)
 | | day (7 scenes) | night (3 scenes) |
